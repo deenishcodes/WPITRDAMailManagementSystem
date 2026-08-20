@@ -18,7 +18,7 @@ from django_tenants.test.cases import TenantTestCase
 
 from orgstructure.models import Department, Division, SubDivision, TenantWorkflowConfig
 
-from .forms import AttachmentUploadForm
+from .forms import AttachmentUploadForm, CorrespondenceRegisterForm
 from .models import (
     Correspondence,
     CorrespondenceAttachment,
@@ -183,6 +183,48 @@ class AttachmentTests(TenantTestCase):
         f = SimpleUploadedFile("big.pdf", big_content, content_type="application/pdf")
         form = AttachmentUploadForm(files={"file": f})
         self.assertFalse(form.is_valid())
+
+
+class ReceivedViaFieldTests(TenantTestCase):
+    def setUp(self):
+        self.dept = Department.objects.create(name="Land Administration")
+
+    def _base_data(self, **overrides):
+        data = {
+            "subject": "Test letter",
+            "sender_name": "Someone",
+            "sender_address": "",
+            "date_received": "2026-01-01",
+            "remarks": "",
+            "department": str(self.dept.pk),
+            "due_date": "",
+        }
+        data.update(overrides)
+        return data
+
+    def test_predefined_option_is_used_directly(self):
+        form = CorrespondenceRegisterForm(data=self._base_data(received_via="Email"))
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(form.cleaned_data["received_via"], "Email")
+
+    def test_other_without_text_is_rejected(self):
+        form = CorrespondenceRegisterForm(
+            data=self._base_data(received_via="Other", received_via_other="")
+        )
+        self.assertFalse(form.is_valid())
+        self.assertIn("received_via_other", form.errors)
+
+    def test_other_with_text_overrides_the_choice_value(self):
+        form = CorrespondenceRegisterForm(
+            data=self._base_data(received_via="Other", received_via_other="Courier (DHL)")
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(form.cleaned_data["received_via"], "Courier (DHL)")
+
+    def test_blank_received_via_is_allowed(self):
+        form = CorrespondenceRegisterForm(data=self._base_data(received_via=""))
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(form.cleaned_data["received_via"], "")
 
 
 class BulkRegisterCsvTests(TenantTestCase):

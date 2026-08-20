@@ -13,7 +13,33 @@ from .models import (
 User = get_user_model()
 
 
+RECEIVED_VIA_CHOICES = [
+    ("", "— Select —"),
+    ("Post", "Post"),
+    ("Hand delivery", "Hand delivery"),
+    ("Email", "Email"),
+    ("Fax", "Fax"),
+    ("Other", "Other"),
+]
+
+
 class CorrespondenceRegisterForm(forms.ModelForm):
+    # received_via stays a plain CharField on the model (Correspondence.
+    # received_via) so "Other" can still store whatever the officer types —
+    # this dropdown is a form-layer convenience, not a model-level
+    # constraint. clean() below resolves the two fields down to the single
+    # value construct_instance() picks up for the model field.
+    received_via = forms.ChoiceField(
+        choices=RECEIVED_VIA_CHOICES,
+        required=False,
+        widget=forms.Select(attrs={"class": "form-select", "id": "id_received_via"}),
+    )
+    received_via_other = forms.CharField(
+        required=False,
+        label="Please specify",
+        widget=forms.TextInput(attrs={"class": "form-control"}),
+    )
+
     class Meta:
         model = Correspondence
         fields = [
@@ -31,13 +57,32 @@ class CorrespondenceRegisterForm(forms.ModelForm):
             "sender_name": forms.TextInput(attrs={"class": "form-control"}),
             "sender_address": forms.Textarea(attrs={"class": "form-control", "rows": 2}),
             "date_received": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
-            "received_via": forms.TextInput(
-                attrs={"class": "form-control", "placeholder": "Post, hand delivery, email..."}
-            ),
             "remarks": forms.Textarea(attrs={"class": "form-control", "rows": 2}),
             "department": forms.Select(attrs={"class": "form-select"}),
             "due_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Force received_via_other to render right after received_via
+        # regardless of Django's default field-ordering rules for a
+        # declared-but-not-in-Meta.fields field, so the show/hide behavior
+        # in register.html's script lines up visually.
+        self.order_fields(
+            ["subject", "sender_name", "sender_address", "date_received", "received_via",
+             "received_via_other", "remarks", "department", "due_date"]
+        )
+
+    def clean(self):
+        cleaned_data = super().clean()
+        received_via = cleaned_data.get("received_via")
+        other = (cleaned_data.get("received_via_other") or "").strip()
+        if received_via == "Other":
+            if not other:
+                self.add_error("received_via_other", "Please specify how it was received.")
+            else:
+                cleaned_data["received_via"] = other
+        return cleaned_data
 
 
 class OutgoingCorrespondenceForm(forms.ModelForm):

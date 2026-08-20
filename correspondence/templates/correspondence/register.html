@@ -24,7 +24,7 @@
         <form method="post">
           {% csrf_token %}
           {% for field in form %}
-            <div class="mb-3">
+            <div class="mb-3" data-field="{{ field.name }}">
               <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
               {{ field }}
               {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
@@ -37,5 +37,17 @@
       </div>
     </div>
   </div>
+  <script>
+    (function () {
+      var select = document.getElementById("id_received_via");
+      var otherWrapper = document.querySelector('[data-field="received_via_other"]');
+      if (!select || !otherWrapper) return;
+      function toggle() {
+        otherWrapper.style.display = select.value === "Other" ? "" : "none";
+      }
+      select.addEventListener("change", toggle);
+      toggle();
+    })();
+  </script>
 </body>
 </html>
