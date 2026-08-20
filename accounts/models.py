@@ -41,6 +41,14 @@ class User(AbstractUser):
         on_delete=models.SET_NULL,
         related_name="users",
     )
+    sub_division = models.ForeignKey(
+        "orgstructure.SubDivision",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="users",
+        help_text="Which SubDivision this user runs, for Sub-Branch Officers (Phase 2c).",
+    )
 
     def __str__(self):
         return self.get_full_name() or self.username

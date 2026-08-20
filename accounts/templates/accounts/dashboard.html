@@ -10,12 +10,42 @@
     <div class="card shadow-sm">
       <div class="card-body p-4">
         <h1 class="h4 mb-3">Welcome, {{ user.get_full_name|default:user.username }}</h1>
-        <p class="text-muted">
-          You're logged in. The real dashboard — new/assigned/pending/overdue/closed
-          letter counts — arrives once the correspondence workflow itself is built
-          (Phase 2c onward).
-        </p>
+
+        <div class="row row-cols-3 row-cols-sm-5 g-2 text-center mb-3">
+          <div class="col">
+            <div class="border rounded p-2">
+              <div class="h5 mb-0">{{ counts.new }}</div>
+              <div class="small text-muted">New</div>
+            </div>
+          </div>
+          <div class="col">
+            <div class="border rounded p-2">
+              <div class="h5 mb-0">{{ counts.assigned }}</div>
+              <div class="small text-muted">Assigned</div>
+            </div>
+          </div>
+          <div class="col">
+            <div class="border rounded p-2">
+              <div class="h5 mb-0">{{ counts.pending }}</div>
+              <div class="small text-muted">Pending</div>
+            </div>
+          </div>
+          <div class="col">
+            <div class="border rounded p-2 border-danger">
+              <div class="h5 mb-0 text-danger">{{ counts.overdue }}</div>
+              <div class="small text-muted">Overdue</div>
+            </div>
+          </div>
+          <div class="col">
+            <div class="border rounded p-2">
+              <div class="h5 mb-0">{{ counts.closed }}</div>
+              <div class="small text-muted">Closed</div>
+            </div>
+          </div>
+        </div>
+
         <p>
+          <a href="{% url 'correspondence-list' %}" class="btn btn-primary btn-sm">Correspondence</a>
           <a href="/workflow-configuration/" class="btn btn-outline-secondary btn-sm">Workflow configuration</a>
           <a href="/admin/" class="btn btn-outline-secondary btn-sm">Admin panel</a>
           <a href="{% url 'logout' %}" class="btn btn-outline-danger btn-sm">Log out</a>

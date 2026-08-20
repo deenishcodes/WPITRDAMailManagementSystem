@@ -55,7 +55,8 @@ TENANT_APPS = [
     "django.contrib.messages",
     "orgstructure",  # Department/Division/SubDivision, Designation, workflow config
     "accounts",  # custom User model — must come after orgstructure (FK target)
-    # Phase 2c+ will add: correspondence, audit, reports
+    "correspondence",  # letter registration + routing workflow (Phase 2c)
+    # Later phases will add: audit, reports
 ]
 
 # django_tenants' TenantSyncRouter only allows an app to migrate onto the

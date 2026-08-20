@@ -1,0 +1,222 @@
+"""
+Correspondence (incoming letter) tracking — Phase 2c.
+
+Routes a registered letter through Postal Officer -> Head of Branch ->
+(Sub-Branch Officer, if TenantWorkflowConfig.sub_branch_tier_enabled was on
+when it reached that step) -> Subject Officer -> Closed. No formal spec
+document exists for this workflow; the model below is inferred from the
+already-seeded role names (see orgstructure.management.commands.seed_roles)
+and the Department -> Division -> SubDivision hierarchy.
+
+Lives in TENANT_APPS (see settings.py), so every organisation's
+correspondence is isolated per-schema like everything else in this project.
+"""
+
+from django.conf import settings
+from django.db import models, transaction
+from django.utils import timezone
+
+
+class RegistrationCounter(models.Model):
+    """
+    One row per calendar year, used to hand out sequential, human-readable
+    registration numbers ("2026/00001") safely under concurrent registration.
+
+    A plain model (locked with select_for_update, see
+    next_registration_number below) rather than a raw Postgres SEQUENCE,
+    because schema-per-tenant means every tenant needs its own
+    independently-numbered, year-resetting sequence — a plain model migrates
+    into every tenant schema automatically the same way everything else in
+    this project already does; a hand-managed per-tenant-per-year SEQUENCE
+    would not.
+    """
+
+    year = models.PositiveIntegerField(unique=True)
+    last_number = models.PositiveIntegerField(default=0)
+
+    def __str__(self):
+        return f"{self.year} (last: {self.last_number})"
+
+
+def next_registration_number():
+    """
+    Allocates the next sequential registration number for the current year.
+
+    Must be called inside the same transaction.atomic() block as the
+    Correspondence.objects.create(...) it's for, so the counter increment
+    and the new row commit or roll back together. Deliberately not a
+    Correspondence.save()/pre_save hook — that would silently allocate a
+    new number on any unrelated save of an instance missing one.
+    """
+    year = timezone.localdate().year
+    with transaction.atomic():
+        counter, _ = RegistrationCounter.objects.select_for_update().get_or_create(
+            year=year, defaults={"last_number": 0}
+        )
+        counter.last_number += 1
+        counter.save(update_fields=["last_number"])
+        return f"{year}/{counter.last_number:05d}"
+
+
+class CorrespondenceQuerySet(models.QuerySet):
+    def visible_to(self, user):
+        """
+        Department/division/sub-division/holder-scoped visibility, per the
+        README's explicit requirement that this logic lives here. A user can
+        belong to multiple role Groups, so filters are unioned across every
+        group they're in, not just the first one that matches.
+        """
+        if user.is_superuser:
+            return self
+
+        groups = set(user.groups.values_list("name", flat=True))
+        filters = models.Q()
+        matched = False
+
+        if "Postal Officer" in groups:
+            filters |= models.Q(registered_by=user)
+            matched = True
+        if "Head of Branch" in groups and user.department_id:
+            filters |= models.Q(department_id=user.department_id)
+            matched = True
+        if "Sub-Branch Officer" in groups and user.sub_division_id:
+            filters |= models.Q(sub_division_id=user.sub_division_id)
+            matched = True
+        if "Subject Officer" in groups:
+            filters |= models.Q(current_holder=user)
+            matched = True
+        if "Viewer" in groups and user.department_id:
+            filters |= models.Q(department_id=user.department_id)
+            matched = True
+
+        if not matched:
+            return self.none()
+        return self.filter(filters).distinct()
+
+
+class Correspondence(models.Model):
+    class Status(models.TextChoices):
+        NEW = "new", "New"
+        ASSIGNED = "assigned", "Assigned"
+        PENDING = "pending", "Pending"
+        CLOSED = "closed", "Closed"
+
+    registration_number = models.CharField(max_length=20, unique=True, editable=False)
+    subject = models.CharField(max_length=300)
+    sender_name = models.CharField(max_length=200)
+    sender_address = models.TextField(blank=True)
+    date_received = models.DateField()
+    received_via = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="e.g. Post, Hand delivery, Email, Fax.",
+    )
+    remarks = models.TextField(blank=True)
+
+    # department/registered_by are PROTECTed: government record-keeping
+    # means a Department or the officer who registered a letter shouldn't be
+    # deletable while correspondence still references them. division/
+    # sub_division/current_holder are SET_NULL instead: reorganisations
+    # happen, and correspondence shouldn't block a Division rename/delete or
+    # disappear because a user account was removed.
+    department = models.ForeignKey(
+        "orgstructure.Department", on_delete=models.PROTECT, related_name="correspondence"
+    )
+    division = models.ForeignKey(
+        "orgstructure.Division",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="correspondence",
+    )
+    sub_division = models.ForeignKey(
+        "orgstructure.SubDivision",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="correspondence",
+    )
+    current_holder = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="held_correspondence",
+        help_text="The specific Subject Officer currently holding this letter, if it's reached that tier.",
+    )
+
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.NEW)
+    due_date = models.DateField(null=True, blank=True)
+
+    registered_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="registered_correspondence"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    objects = CorrespondenceQuerySet.as_manager()
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name_plural = "Correspondence"
+
+    def __str__(self):
+        return f"{self.registration_number} — {self.subject}"
+
+    @property
+    def is_overdue(self):
+        return bool(
+            self.due_date
+            and self.due_date < timezone.localdate()
+            and self.status != self.Status.CLOSED
+        )
+
+
+class RoutingEvent(models.Model):
+    """
+    Immutable log of everything that happens to a piece of correspondence:
+    registration, forwarding, being marked pending, and closing. This is
+    the workflow's audit trail (who has the file now, and its history) —
+    not a separate "audit" app, since it's core to running the workflow
+    itself rather than a reporting feature.
+
+    sub_branch_tier_enabled_snapshot is set only on the Head-of-Branch
+    FORWARD event, read from TenantWorkflowConfig.get_solo() at the moment
+    of forwarding. This is what makes "in-flight letters keep following the
+    rules active when they reached their current step" literally true: it's
+    a per-event fact captured once, not a per-letter flag re-read live.
+    """
+
+    class Action(models.TextChoices):
+        REGISTER = "register", "Registered"
+        FORWARD = "forward", "Forwarded"
+        MARK_PENDING = "mark_pending", "Marked pending"
+        CLOSE = "close", "Closed"
+
+    correspondence = models.ForeignKey(
+        Correspondence, on_delete=models.CASCADE, related_name="routing_events"
+    )
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+")
+    action = models.CharField(max_length=20, choices=Action.choices)
+
+    to_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    to_department = models.ForeignKey(
+        "orgstructure.Department", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    to_division = models.ForeignKey(
+        "orgstructure.Division", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    to_sub_division = models.ForeignKey(
+        "orgstructure.SubDivision", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    sub_branch_tier_enabled_snapshot = models.BooleanField(null=True, blank=True)
+    note = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
+
+    def __str__(self):
+        return f"{self.correspondence.registration_number}: {self.get_action_display()} by {self.actor}"

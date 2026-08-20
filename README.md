@@ -1,9 +1,10 @@
-# MMS — Phase 2a + 2b
+# MMS — Phase 2a + 2b + 2c
 
 ## Status
 
 - **Phase 2a** (project skeleton, tenant provisioning, self-service signup) — verified working end-to-end.
-- **Phase 2b** (User/Role/Department models, login, org structure, workflow config toggle) — built and syntax-checked, not yet run against a live database. Expect this to need the same kind of small fixes Phase 2a did on first real run.
+- **Phase 2b** (User/Role/Department models, login, org structure, workflow config toggle) — verified working end-to-end.
+- **Phase 2c** (correspondence model, registration screen, routing workflow) — verified working end-to-end, including automated test coverage for the trickier logic (registration numbering, per-role visibility, the Sub-Branch tier snapshot).
 
 ## What's in Phase 2a
 
@@ -14,26 +15,30 @@
 
 ## What's new in Phase 2b
 
-- **`accounts` app** — a real `User` model (extends Django's built-in one) with department/division/designation, plus login/logout/dashboard screens.
+- **`accounts` app** — a real `User` model (extends Django's built-in one) with department/division/sub-division/designation, plus login/logout/dashboard screens.
 - **`orgstructure` app** — `Department` → `Division` → `SubDivision` hierarchy, `Designation` (job titles), and `TenantWorkflowConfig` (the Sub-Branch tier on/off toggle from Section 10, Q2).
 - **Roles as Django Groups** — Postal Officer, Head of Branch, Sub-Branch Officer, Subject Officer, Viewer. Seeded via a new management command, `seed_roles`, run per-tenant. "System Admin" isn't a group — it's Django's built-in superuser flag.
 - **A dedicated Workflow Configuration screen** at `/workflow-configuration/` (not just Django admin) — Section 6 calls this out as its own screen.
 
-## ⚠️ Important: Phase 2b requires a database reset
+## What's new in Phase 2c
 
-Adding a custom `User` model (`AUTH_USER_MODEL`) is a decision Django needs to know about **before the very first migration ever runs** against a database. Since Phase 2a already ran migrations using Django's default User model, switching now means the existing local database needs to be wiped and rebuilt from scratch.
+No formal spec document exists for the correspondence workflow itself — this was built from the role names, the org hierarchy, and the `TenantWorkflowConfig` docstring's routing description, not a handed-down spec. See `.claude/plans/` history for the reasoning behind each design call (registration numbering, visibility scoping, tier snapshotting) if it needs revisiting.
 
-This is completely normal this early in a project — it's specifically why teams settle on a custom User model before real data exists, not after. Nothing about your Phase 2a testing is lost in any meaningful sense; it was test data.
+- **`correspondence` app** — `Correspondence` (the letter itself), `RoutingEvent` (an immutable audit trail of every registration/forward/pending/close action), `RegistrationCounter` (backs sequential, year-scoped registration numbers like `2026/00001`, safe under concurrent registration via `select_for_update`).
+- **Registration screen** at `/correspondence/register/` — Postal Officer only.
+- **Routing workflow**: Postal Officer registers → Head of Branch forwards (to a Sub-Branch, if the tenant's Sub-Branch tier toggle is on, otherwise straight to a Subject Officer) → Sub-Branch Officer (if reached) forwards to a Subject Officer → Subject Officer marks pending or closes. Each `RoutingEvent` that involves a Head-of-Branch forward snapshots whether the tier was on *at that moment*, so a letter already in flight keeps following the rule that was active when it got there, even if the tenant flips the toggle afterwards — verified directly against the toggle mid-workflow.
+- **Department/division/sub-division-scoped visibility** (`Correspondence.objects.visible_to(user)`) — the requirement Phase 2b's README flagged as belonging here. A user's visible letters are the union of whatever their role(s) grant: Postal Officer sees what they registered, Head of Branch sees their whole department, Sub-Branch Officer sees their sub-division, Subject Officer sees only what they're currently holding, Viewer sees their department read-only. Enforced in every list/detail/action view, including a direct-URL-guess check on detail/action views (confirmed: a user in a different department gets a 404, not just an empty list).
+- **`User.sub_division`** — a field Phase 2b didn't have; added because Sub-Branch Officer visibility has nothing to filter on without it.
+- **Dashboard** now shows real new/assigned/pending/overdue/closed counts, scoped the same way.
+- **`correspondence/tests.py`** — the first automated test coverage in this project (registration-number sequencing, visibility per role, tier-snapshot immutability). Everything before this was validated purely by hand against live docker-compose Postgres; this phase's concurrency and business-rule logic was judged trickier than what eyeballing alone reliably catches.
 
-## Running it locally (fresh start, covers both phases)
+## Running it locally (fresh start)
 
 ```bash
 cp .env.example .env
 # edit .env if you want, defaults work for local dev
 
-# If you have an existing Phase 2a-only database, wipe it first:
-docker compose down -v
-
+docker compose down -v   # wipe any existing local database first
 docker compose up --build
 ```
 
@@ -41,13 +46,13 @@ In a second terminal, once containers are up:
 
 ```bash
 # 1. Generate migrations for the new apps
-docker compose exec web python manage.py makemigrations tenants accounts orgstructure
+docker compose exec web python manage.py makemigrations tenants accounts orgstructure correspondence
 
 # 2. Apply shared-schema migrations
 docker compose exec web python manage.py migrate_schemas --shared
 
-# 3. Create the public tenant (also runs accounts/orgstructure migrations
-#    into the public schema automatically, since it's created fresh)
+# 3. Create the public tenant (also runs the TENANT_APPS migrations into the
+#    public schema automatically, since it's created fresh)
 docker compose exec web python manage.py bootstrap_public_tenant
 
 # 4. Create your admin login, scoped to the public schema
@@ -61,37 +66,40 @@ Then:
 
 - Visit `http://localhost:8000/` → signup form (public schema)
 - Visit `http://localhost:8000/admin/` → tenant registry + org structure admin
-- Sign up a test organisation, e.g. subdomain `wpsecretariat` — its schema automatically gets all the accounts/orgstructure tables too, since new tenants are always migrated with whatever migration files exist at creation time
+- Sign up a test organisation, e.g. subdomain `wpsecretariat` — its schema automatically gets all the TENANT_APPS tables too, since new tenants are always migrated with whatever migration files exist at creation time
 - Seed its roles too: `docker compose exec web python manage.py tenant_command seed_roles --schema=wpsecretariat`
 - Create an admin user scoped to that schema: `docker compose exec web python manage.py tenant_command createsuperuser --schema=wpsecretariat`
+- In `/admin/`, give some users a Department/Division/SubDivision and add them to a role Group (Postal Officer, Head of Branch, Sub-Branch Officer, Subject Officer, Viewer) to exercise the correspondence workflow.
 
 (No local wildcard DNS for `*.mms.local`? Test via `curl -H "Host: wpsecretariat.mms.local" http://localhost:8000/` instead.)
 
-## Trying out Phase 2b specifically
+## Running the test suite
 
-1. Log in to your test org's `/admin/` with the superuser you created for it, and assign that user to one of the seeded role Groups (e.g. "Head of Branch").
-2. Visit `/login/` and log in as that user → lands on the minimal dashboard placeholder.
-3. Visit `/workflow-configuration/` → toggle the Sub-Branch tier on/off, save, confirm it persisted (refresh and check the checkbox state).
-4. Back in `/admin/` → check Department/Division/SubDivision/Designation are all there, and that adding a Division inline under a Department works.
+```bash
+docker compose exec web python manage.py test correspondence
+```
 
 ## Why it's built this way
 
 - **Schema-per-tenant**, not a shared `tenant_id` column — matches the original "dedicated instance per client" requirement and removes an entire class of cross-tenant data-leak risk (Section 7).
 - **No billing app** — free shared government service (Section 10, Q10).
-- **Auth lives in `TENANT_APPS`, not `SHARED_APPS`** — each tenant's users are fully isolated per-schema, including the platform's own "public" tenant.
+- **Auth lives in `TENANT_APPS`, folded into `SHARED_APPS` too** — each tenant's users are fully isolated per-schema, *including* the platform's own "public" tenant, which also needs auth/admin/sessions for platform-admin users. (`django-tenants`'s router only syncs an app onto the public schema if it's listed in `SHARED_APPS`; `TENANT_APPS` alone are silently skipped there. `config/settings.py` folds `TENANT_APPS` into `SHARED_APPS` to get both.)
 - **Roles as Django Groups, not a bespoke Role model** — gets Django's permission system for free, matches the "group/permission-based" RBAC approach from Section 7.
+- **Correspondence routing targets an org unit (Department/Sub-Division), not a named person, until the final Subject Officer step** — a Division can have several people in the "Head of Branch" group; forcing a specific-person choice at every hop would assume exactly one person always holds each role, which isn't true here.
+- **`RoutingEvent` is the audit trail, not a separate `audit` app** — it's core to running the workflow (who has the file now, and its history), not a reporting feature, so it didn't need its own app for Phase 2c.
 - **Docker Compose, not a more exotic stack** — WPITRDA operates this long-term (Section 10, Q9), so it needs to stay realistic for them to run.
 
 ## What's deliberately NOT here yet
 
-- No correspondence model, registration screen, or workflow itself — Phase 2c/2d
-- No department-scoped visibility enforcement — that logic lives in the correspondence app once it exists
-- No email notifications, search, reports — later phases per Section 9
-- No production security hardening — Phase 2h
+- Outgoing/reply correspondence — a different numbering/threading concept, its own phase
+- Multi-level approval/sign-off beyond the single forward chain (register → Head of Branch → [Sub-Branch] → Subject Officer → closed) — nothing in the existing role names implies more than this
+- Automatic SLA/due-date escalation — `due_date` is a plain manually-set field; overdue is computed at query time, nothing flips it automatically
+- Reassignment/transfer without going back up the chain
+- Email notifications, search, reports — later phases per Section 9 (though `RoutingEvent` gives reports a data source to build on later)
+- Bulk registration / file attachments
+- Production security hardening — Phase 2h
 - No Sri Lanka-hosted production deployment target — still needs confirming with WPITRDA's infrastructure team (Section 10, Q11)
 
 ## A note on testing status
 
-Phase 2a was built offline with no live database, and two real bugs turned up on first real run (missing migration file, fiddly manual tenant-bootstrap steps) — both fixed and now baked into this copy as a real migration file and the `bootstrap_public_tenant` command.
-
-Phase 2b was built the same way — offline, no live database — so treat your first run of the reset procedure above as the real first test of this phase. Flag anything that doesn't behave as described so it can get fixed before Phase 2c builds on top of it.
+Every phase so far has been validated for real against live docker-compose Postgres, not just eyeballed — and every phase so far has turned up at least one real bug on first run that offline development alone wouldn't have caught (a missing migration file and fiddly manual bootstrap steps in Phase 2a; a `django-tenants` router gap that silently skipped creating `TENANT_APPS` tables in the public schema in Phase 2b). Phase 2c added its first automated tests specifically because its concurrency and business-rule logic (registration numbering, tier snapshotting, role-scoped visibility) is meaningfully easier to regress silently than prior phases' straightforward CRUD — treat that as the bar for when a future phase should get tests too, not a hard rule that everything now needs them.

@@ -7,7 +7,7 @@ from .models import User
 @admin.register(User)
 class UserAdmin(DjangoUserAdmin):
     fieldsets = DjangoUserAdmin.fieldsets + (
-        ("Organisation", {"fields": ("department", "division", "designation")}),
+        ("Organisation", {"fields": ("department", "division", "sub_division", "designation")}),
     )
     list_display = (
         "username",
@@ -15,6 +15,8 @@ class UserAdmin(DjangoUserAdmin):
         "first_name",
         "last_name",
         "department",
+        "division",
+        "sub_division",
         "designation",
         "is_staff",
     )
