@@ -175,10 +175,16 @@ class Correspondence(models.Model):
 class RoutingEvent(models.Model):
     """
     Immutable log of everything that happens to a piece of correspondence:
-    registration, forwarding, being marked pending, and closing. This is
-    the workflow's audit trail (who has the file now, and its history) —
-    not a separate "audit" app, since it's core to running the workflow
-    itself rather than a reporting feature.
+    registration, forwarding, lateral reassignment, being marked pending,
+    and closing. This is the workflow's audit trail (who has the file now,
+    and its history) — not a separate "audit" app, since it's core to
+    running the workflow itself rather than a reporting feature.
+
+    FORWARD advances a letter to the next tier down (and sets status to
+    ASSIGNED). REASSIGN moves it laterally within the current tier — a
+    different department (Head of Branch correcting a misroute), a
+    different sub-division (Sub-Branch Officer), or a different named
+    Subject Officer (peer handoff) — without changing status.
 
     sub_branch_tier_enabled_snapshot is set only on the Head-of-Branch
     FORWARD event, read from TenantWorkflowConfig.get_solo() at the moment
@@ -190,6 +196,7 @@ class RoutingEvent(models.Model):
     class Action(models.TextChoices):
         REGISTER = "register", "Registered"
         FORWARD = "forward", "Forwarded"
+        REASSIGN = "reassign", "Reassigned"
         MARK_PENDING = "mark_pending", "Marked pending"
         CLOSE = "close", "Closed"
 

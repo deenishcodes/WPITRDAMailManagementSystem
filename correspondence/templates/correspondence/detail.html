@@ -41,13 +41,16 @@
       </div>
     </div>
 
-    {% if can_forward or can_act_as_holder %}
+    {% if can_forward or can_reassign or can_act_as_holder %}
       <div class="card shadow-sm mb-3">
         <div class="card-body p-4">
           <h2 class="h6 mb-3">Actions</h2>
           <div class="d-flex flex-wrap gap-2">
             {% if can_forward %}
               <a href="{% url 'correspondence-forward' correspondence.pk %}" class="btn btn-primary btn-sm">Forward</a>
+            {% endif %}
+            {% if can_reassign %}
+              <a href="{% url 'correspondence-reassign' correspondence.pk %}" class="btn btn-outline-warning btn-sm">Reassign</a>
             {% endif %}
             {% if can_act_as_holder %}
               <form method="post" action="{% url 'correspondence-close' correspondence.pk %}" class="d-inline">

@@ -7,6 +7,12 @@
 </head>
 <body class="bg-light">
   <div class="container" style="max-width: 960px; margin-top: 3rem;">
+    {% if messages %}
+      {% for message in messages %}
+        <div class="alert alert-{{ message.tags|default:'info' }}">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+
     <div class="d-flex justify-content-between align-items-center mb-3">
       <h1 class="h4 mb-0">Correspondence</h1>
       <div>

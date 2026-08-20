@@ -1,7 +1,7 @@
 from django import forms
 from django.contrib.auth import get_user_model
 
-from orgstructure.models import SubDivision
+from orgstructure.models import Department, SubDivision
 
 from .models import Correspondence
 
@@ -71,6 +71,18 @@ class ForwardToUserForm(forms.Form):
         super().__init__(*args, **kwargs)
         if queryset is not None:
             self.fields["to_user"].queryset = queryset
+
+
+class ReassignDepartmentForm(forms.Form):
+    """Head of Branch correcting a misrouted letter to a different department."""
+
+    department = forms.ModelChoiceField(
+        queryset=Department.objects.all(),
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+    note = forms.CharField(
+        required=False, widget=forms.Textarea(attrs={"class": "form-control", "rows": 2})
+    )
 
 
 class MarkPendingForm(forms.Form):

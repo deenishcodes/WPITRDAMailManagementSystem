@@ -171,3 +171,105 @@ class TierSnapshotTests(TenantTestCase):
             event.sub_branch_tier_enabled_snapshot,
             "a routing event's tier snapshot must not change when the live config changes later",
         )
+
+
+class ReassignmentTests(TenantTestCase):
+    """
+    Reassignment moves a letter laterally within its current tier (a
+    different department/sub-division/officer) without changing status,
+    as opposed to forward's advance-to-the-next-tier. See
+    correspondence.views._can_reassign.
+    """
+
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Land Administration")
+        self.dept_b = Department.objects.create(name="Finance")
+        self.division_a = Division.objects.create(department=self.dept_a, name="Survey Division")
+        self.sub_division_a1 = SubDivision.objects.create(division=self.division_a, name="GIS Sub-Branch")
+        self.sub_division_a2 = SubDivision.objects.create(division=self.division_a, name="Cadastral Sub-Branch")
+
+        g_hob = Group.objects.create(name="Head of Branch")
+        g_sbo = Group.objects.create(name="Sub-Branch Officer")
+        g_so = Group.objects.create(name="Subject Officer")
+
+        self.postal = User.objects.create_user("postal", password="x")
+        self.hob = User.objects.create_user("hob", password="x", department=self.dept_a)
+        self.hob.groups.add(g_hob)
+        self.sbo = User.objects.create_user("sbo", password="x", sub_division=self.sub_division_a1)
+        self.sbo.groups.add(g_sbo)
+        self.so_a = User.objects.create_user("so_a", password="x", sub_division=self.sub_division_a1)
+        self.so_a.groups.add(g_so)
+        self.so_b = User.objects.create_user("so_b", password="x", sub_division=self.sub_division_a1)
+        self.so_b.groups.add(g_so)
+
+    def _letter(self, **kwargs):
+        defaults = dict(
+            registration_number=f"2026/{Correspondence.objects.count() + 1:05d}",
+            subject="Test letter",
+            sender_name="Someone",
+            date_received="2026-01-01",
+            department=self.dept_a,
+            registered_by=self.postal,
+        )
+        defaults.update(kwargs)
+        return Correspondence.objects.create(**defaults)
+
+    def test_head_of_branch_reassigns_department(self):
+        from .views import _can_reassign
+
+        letter = self._letter()
+        self.assertTrue(_can_reassign(self.hob, letter))
+        letter.department = self.dept_b
+        letter.save(update_fields=["department"])
+        RoutingEvent.objects.create(
+            correspondence=letter, actor=self.hob,
+            action=RoutingEvent.Action.REASSIGN, to_department=self.dept_b,
+        )
+        letter.refresh_from_db()
+        self.assertEqual(letter.department_id, self.dept_b.id)
+        self.assertEqual(letter.status, Correspondence.Status.NEW, "reassignment must not change status")
+
+    def test_sub_branch_officer_reassigns_sub_division(self):
+        from .views import _can_reassign
+
+        letter = self._letter(
+            division=self.division_a,
+            sub_division=self.sub_division_a1,
+            status=Correspondence.Status.ASSIGNED,
+        )
+        self.assertTrue(_can_reassign(self.sbo, letter))
+        letter.sub_division = self.sub_division_a2
+        letter.save(update_fields=["sub_division"])
+        self.assertEqual(letter.sub_division_id, self.sub_division_a2.id)
+        self.assertEqual(letter.status, Correspondence.Status.ASSIGNED)
+
+    def test_subject_officer_reassigns_to_peer(self):
+        from .views import _can_reassign
+
+        letter = self._letter(current_holder=self.so_a, status=Correspondence.Status.PENDING)
+        self.assertTrue(_can_reassign(self.so_a, letter))
+        self.assertFalse(_can_reassign(self.so_b, letter), "only the current holder may reassign")
+        letter.current_holder = self.so_b
+        letter.save(update_fields=["current_holder"])
+        self.assertEqual(letter.current_holder_id, self.so_b.id)
+        self.assertEqual(letter.status, Correspondence.Status.PENDING)
+
+    def test_closed_letter_cannot_be_reassigned(self):
+        from .views import _can_reassign
+
+        letter = self._letter(current_holder=self.so_a, status=Correspondence.Status.CLOSED)
+        self.assertFalse(_can_reassign(self.so_a, letter))
+        self.assertFalse(_can_reassign(self.hob, letter))
+
+    def test_head_of_branch_cannot_reassign_after_forwarding(self):
+        from .views import _can_reassign
+
+        letter = self._letter(
+            division=self.division_a,
+            sub_division=self.sub_division_a1,
+            status=Correspondence.Status.ASSIGNED,
+        )
+        self.assertFalse(
+            _can_reassign(self.hob, letter),
+            "once routed to a sub-division, the department-level Head of Branch stage has passed",
+        )
