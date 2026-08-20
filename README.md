@@ -4,7 +4,7 @@
 
 - **Phase 2a** (project skeleton, tenant provisioning, self-service signup) — verified working end-to-end.
 - **Phase 2b** (User/Role/Department models, login, org structure, workflow config toggle) — verified working end-to-end.
-- **Phase 2c** (correspondence model, registration screen, routing workflow) — verified working end-to-end, including automated test coverage for the trickier logic (registration numbering, per-role visibility, the Sub-Branch tier snapshot).
+- **Phase 2c** (correspondence model, registration screen, routing workflow, plus lateral reassignment) — verified working end-to-end, including automated test coverage for the trickier logic (registration numbering, per-role visibility, the Sub-Branch tier snapshot, reassignment eligibility).
 
 ## What's in Phase 2a
 
@@ -28,6 +28,7 @@ No formal spec document exists for the correspondence workflow itself — this w
 - **Registration screen** at `/correspondence/register/` — Postal Officer only.
 - **Routing workflow**: Postal Officer registers → Head of Branch forwards (to a Sub-Branch, if the tenant's Sub-Branch tier toggle is on, otherwise straight to a Subject Officer) → Sub-Branch Officer (if reached) forwards to a Subject Officer → Subject Officer marks pending or closes. Each `RoutingEvent` that involves a Head-of-Branch forward snapshots whether the tier was on *at that moment*, so a letter already in flight keeps following the rule that was active when it got there, even if the tenant flips the toggle afterwards — verified directly against the toggle mid-workflow.
 - **Department/division/sub-division-scoped visibility** (`Correspondence.objects.visible_to(user)`) — the requirement Phase 2b's README flagged as belonging here. A user's visible letters are the union of whatever their role(s) grant: Postal Officer sees what they registered, Head of Branch sees their whole department, Sub-Branch Officer sees their sub-division, Subject Officer sees only what they're currently holding, Viewer sees their department read-only. Enforced in every list/detail/action view, including a direct-URL-guess check on detail/action views (confirmed: a user in a different department gets a 404, not just an empty list).
+- **Reassignment** (`/correspondence/<pk>/reassign/`) — lets whoever currently holds a letter move it *sideways* within their own tier, without advancing it: Head of Branch corrects a misrouted Department, Sub-Branch Officer moves it to a different SubDivision, Subject Officer hands it to a peer (e.g. going on leave). Distinct from Forward, which advances to the next tier and sets `status=ASSIGNED` — reassignment leaves status untouched. Blocked once Closed. Since a reassignment routinely moves a letter out of the acting user's own visible scope (that's the point of a handoff), action views redirect to the list instead of the detail page when that happens, rather than 404ing the person who just acted.
 - **`User.sub_division`** — a field Phase 2b didn't have; added because Sub-Branch Officer visibility has nothing to filter on without it.
 - **Dashboard** now shows real new/assigned/pending/overdue/closed counts, scoped the same way.
 - **`correspondence/tests.py`** — the first automated test coverage in this project (registration-number sequencing, visibility per role, tier-snapshot immutability). Everything before this was validated purely by hand against live docker-compose Postgres; this phase's concurrency and business-rule logic was judged trickier than what eyeballing alone reliably catches.
@@ -94,7 +95,6 @@ docker compose exec web python manage.py test correspondence
 - Outgoing/reply correspondence — a different numbering/threading concept, its own phase
 - Multi-level approval/sign-off beyond the single forward chain (register → Head of Branch → [Sub-Branch] → Subject Officer → closed) — nothing in the existing role names implies more than this
 - Automatic SLA/due-date escalation — `due_date` is a plain manually-set field; overdue is computed at query time, nothing flips it automatically
-- Reassignment/transfer without going back up the chain
 - Email notifications, search, reports — later phases per Section 9 (though `RoutingEvent` gives reports a data source to build on later)
 - Bulk registration / file attachments
 - Production security hardening — Phase 2h
