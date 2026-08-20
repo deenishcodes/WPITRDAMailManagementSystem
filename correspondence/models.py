@@ -212,6 +212,7 @@ class RoutingEvent(models.Model):
 
     class Action(models.TextChoices):
         REGISTER = "register", "Registered"
+        EDIT = "edit", "Edited"
         FORWARD = "forward", "Forwarded"
         REASSIGN = "reassign", "Reassigned"
         MARK_PENDING = "mark_pending", "Marked pending"

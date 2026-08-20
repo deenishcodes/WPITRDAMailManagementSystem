@@ -18,7 +18,7 @@ from django_tenants.test.cases import TenantTestCase
 
 from orgstructure.models import Department, Division, SubDivision, TenantWorkflowConfig
 
-from .forms import AttachmentUploadForm, CorrespondenceRegisterForm
+from .forms import AttachmentUploadForm, CorrespondenceEditForm, CorrespondenceRegisterForm
 from .models import (
     Correspondence,
     CorrespondenceAttachment,
@@ -29,7 +29,7 @@ from .models import (
     next_registration_number,
 )
 from .notifications import notify_new_holder, notify_registrant_closed
-from .views import _can_reply, _can_send_outgoing, _parse_bulk_csv, _reports_data
+from .views import _can_edit, _can_reply, _can_send_outgoing, _parse_bulk_csv, _reports_data
 
 User = get_user_model()
 
@@ -183,6 +183,103 @@ class AttachmentTests(TenantTestCase):
         f = SimpleUploadedFile("big.pdf", big_content, content_type="application/pdf")
         form = AttachmentUploadForm(files={"file": f})
         self.assertFalse(form.is_valid())
+
+
+class CanEditTests(TenantTestCase):
+    def setUp(self):
+        self.dept = Department.objects.create(name="Land Administration")
+        self.registrant = User.objects.create_user("postal", password="x")
+        self.other = User.objects.create_user("other", password="x")
+
+    def _letter(self, **kwargs):
+        defaults = dict(
+            registration_number="2026/00001",
+            subject="Test",
+            sender_name="X",
+            date_received="2026-01-01",
+            department=self.dept,
+            registered_by=self.registrant,
+        )
+        defaults.update(kwargs)
+        return Correspondence.objects.create(**defaults)
+
+    def test_registrant_can_edit_while_open(self):
+        letter = self._letter(status=Correspondence.Status.NEW)
+        self.assertTrue(_can_edit(self.registrant, letter))
+
+    def test_other_user_cannot_edit(self):
+        letter = self._letter(status=Correspondence.Status.NEW)
+        self.assertFalse(_can_edit(self.other, letter))
+
+    def test_registrant_cannot_edit_after_closed(self):
+        # Unlike _can_reply, editing mutates the record's own fields, so it
+        # follows the standard closed-blocks-everything rule.
+        letter = self._letter(status=Correspondence.Status.CLOSED)
+        self.assertFalse(_can_edit(self.registrant, letter))
+
+    def test_superuser_can_always_edit(self):
+        letter = self._letter(status=Correspondence.Status.ASSIGNED)
+        superuser = User.objects.create_superuser("admin", password="x")
+        self.assertTrue(_can_edit(superuser, letter))
+
+
+class CorrespondenceEditFormTests(TenantTestCase):
+    def setUp(self):
+        self.dept = Department.objects.create(name="Land Administration")
+        self.registrant = User.objects.create_user("postal", password="x")
+        self.letter = Correspondence.objects.create(
+            registration_number="2026/00001",
+            subject="Original subject",
+            sender_name="Original sender",
+            date_received="2026-01-01",
+            received_via="Courier (DHL)",  # not one of the predefined choices
+            department=self.dept,
+            registered_by=self.registrant,
+        )
+
+    def _form_data(self, **overrides):
+        data = {
+            "subject": self.letter.subject,
+            "sender_name": self.letter.sender_name,
+            "sender_address": "",
+            "date_received": "2026-01-01",
+            "received_via": "Email",
+            "received_via_other": "",
+            "remarks": "",
+            "due_date": "",
+        }
+        data.update(overrides)
+        return data
+
+    def test_existing_non_standard_value_preselects_other(self):
+        # self.letter.received_via = "Courier (DHL)" isn't a predefined
+        # choice — the edit form must pre-select "Other" and pre-fill the
+        # free-text field, otherwise the bound select wouldn't match any
+        # <option> and would silently show nothing selected.
+        form = CorrespondenceEditForm(instance=self.letter)
+        self.assertEqual(form.initial["received_via"], "Other")
+        self.assertEqual(form.initial["received_via_other"], "Courier (DHL)")
+
+    def test_editing_subject_saves_and_reports_changed_field(self):
+        form = CorrespondenceEditForm(
+            data=self._form_data(subject="Corrected subject"), instance=self.letter
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertIn("subject", form.changed_data)
+        saved = form.save()
+        self.assertEqual(saved.subject, "Corrected subject")
+
+    def test_department_is_not_editable(self):
+        self.assertNotIn("department", CorrespondenceEditForm().fields)
+
+    def test_changing_only_other_text_updates_received_via(self):
+        form = CorrespondenceEditForm(
+            data=self._form_data(received_via="Other", received_via_other="Courier (FedEx)"),
+            instance=self.letter,
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+        saved = form.save()
+        self.assertEqual(saved.received_via, "Courier (FedEx)")
 
 
 class ReceivedViaFieldTests(TenantTestCase):

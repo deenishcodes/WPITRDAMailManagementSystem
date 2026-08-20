@@ -23,12 +23,16 @@ RECEIVED_VIA_CHOICES = [
 ]
 
 
-class CorrespondenceRegisterForm(forms.ModelForm):
-    # received_via stays a plain CharField on the model (Correspondence.
-    # received_via) so "Other" can still store whatever the officer types —
-    # this dropdown is a form-layer convenience, not a model-level
-    # constraint. clean() below resolves the two fields down to the single
-    # value construct_instance() picks up for the model field.
+class ReceivedViaFormMixin(forms.Form):
+    """
+    Shared by CorrespondenceRegisterForm and CorrespondenceEditForm.
+    received_via stays a plain CharField on the model (Correspondence.
+    received_via) so "Other" can still store whatever the officer types —
+    this dropdown is a form-layer convenience, not a model-level
+    constraint. clean() resolves the two fields down to the single value
+    construct_instance() picks up for the model field.
+    """
+
     received_via = forms.ChoiceField(
         choices=RECEIVED_VIA_CHOICES,
         required=False,
@@ -40,6 +44,19 @@ class CorrespondenceRegisterForm(forms.ModelForm):
         widget=forms.TextInput(attrs={"class": "form-control"}),
     )
 
+    def clean(self):
+        cleaned_data = super().clean()
+        received_via = cleaned_data.get("received_via")
+        other = (cleaned_data.get("received_via_other") or "").strip()
+        if received_via == "Other":
+            if not other:
+                self.add_error("received_via_other", "Please specify how it was received.")
+            else:
+                cleaned_data["received_via"] = other
+        return cleaned_data
+
+
+class CorrespondenceRegisterForm(ReceivedViaFormMixin, forms.ModelForm):
     class Meta:
         model = Correspondence
         fields = [
@@ -73,16 +90,50 @@ class CorrespondenceRegisterForm(forms.ModelForm):
              "received_via_other", "remarks", "department", "due_date"]
         )
 
-    def clean(self):
-        cleaned_data = super().clean()
-        received_via = cleaned_data.get("received_via")
-        other = (cleaned_data.get("received_via_other") or "").strip()
-        if received_via == "Other":
-            if not other:
-                self.add_error("received_via_other", "Please specify how it was received.")
-            else:
-                cleaned_data["received_via"] = other
-        return cleaned_data
+
+class CorrespondenceEditForm(ReceivedViaFormMixin, forms.ModelForm):
+    """
+    Corrects entry details after registration — subject/sender/dates/
+    remarks only. department is deliberately excluded: correcting it goes
+    through Reassign instead, so there's a single audited path for
+    department changes rather than two ways to do the same thing.
+    """
+
+    class Meta:
+        model = Correspondence
+        fields = [
+            "subject",
+            "sender_name",
+            "sender_address",
+            "date_received",
+            "received_via",
+            "remarks",
+            "due_date",
+        ]
+        widgets = {
+            "subject": forms.TextInput(attrs={"class": "form-control"}),
+            "sender_name": forms.TextInput(attrs={"class": "form-control"}),
+            "sender_address": forms.Textarea(attrs={"class": "form-control", "rows": 2}),
+            "date_received": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
+            "remarks": forms.Textarea(attrs={"class": "form-control", "rows": 2}),
+            "due_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.order_fields(
+            ["subject", "sender_name", "sender_address", "date_received", "received_via",
+             "received_via_other", "remarks", "due_date"]
+        )
+        # An existing value that isn't one of the predefined choices (set
+        # before this dropdown existed, via bulk CSV import, or via a
+        # previous "Other" entry) needs "Other" pre-selected with the
+        # original text pre-filled — otherwise the bound value wouldn't
+        # match any <option>, and the select would silently show nothing
+        # selected instead of the letter's actual received_via value.
+        if self.instance.pk and self.instance.received_via not in dict(RECEIVED_VIA_CHOICES):
+            self.initial["received_via"] = "Other"
+            self.initial["received_via_other"] = self.instance.received_via
 
 
 class OutgoingCorrespondenceForm(forms.ModelForm):

@@ -18,6 +18,7 @@ from orgstructure.models import Department, TenantWorkflowConfig
 from .forms import (
     AttachmentUploadForm,
     BulkRegisterForm,
+    CorrespondenceEditForm,
     CorrespondenceRegisterForm,
     ForwardToSubDivisionForm,
     ForwardToUserForm,
@@ -94,6 +95,23 @@ def _can_act_as_holder(user, correspondence):
     if user.is_superuser:
         return True
     return correspondence.current_holder_id == user.id
+
+
+def _can_edit(user, correspondence):
+    """
+    Correcting entry details (subject/sender/dates/remarks): only the
+    Postal Officer who registered it, or a superuser — matches the
+    existing pattern where registration itself is Postal-Officer-gated,
+    keeping "who's responsible for the data entry" clear. Blocked once
+    CLOSED, like every other mutation of the letter's own state (unlike
+    _can_reply, editing does mutate the record, so it follows the
+    standard closed-blocks-everything rule).
+    """
+    if correspondence.status == Correspondence.Status.CLOSED:
+        return False
+    if user.is_superuser:
+        return True
+    return correspondence.registered_by_id == user.id
 
 
 def _can_reply(user, correspondence):
@@ -182,6 +200,45 @@ def correspondence_register(request):
         form = CorrespondenceRegisterForm()
 
     return render(request, "correspondence/register.html", {"form": form})
+
+
+@login_required
+def correspondence_edit(request, pk):
+    correspondence = get_object_or_404(Correspondence.objects.visible_to(request.user), pk=pk)
+    if not _can_edit(request.user, correspondence):
+        raise PermissionDenied("You can't edit this letter.")
+
+    if request.method == "POST":
+        form = CorrespondenceEditForm(request.POST, instance=correspondence)
+        if form.is_valid():
+            # received_via_other isn't a model field — normalize it back to
+            # "received_via" in the note so the audit trail names the
+            # actual field that changed, regardless of which of the two
+            # form fields Django's changed_data attributed the edit to.
+            changed_fields = set(form.changed_data)
+            if "received_via_other" in changed_fields:
+                changed_fields.discard("received_via_other")
+                changed_fields.add("received_via")
+
+            if changed_fields:
+                with transaction.atomic():
+                    form.save()
+                    RoutingEvent.objects.create(
+                        correspondence=correspondence,
+                        actor=request.user,
+                        action=RoutingEvent.Action.EDIT,
+                        note=f"Edited: {', '.join(sorted(changed_fields))}",
+                    )
+                messages.success(request, "Updated.")
+            return redirect("correspondence-detail", pk=correspondence.pk)
+    else:
+        form = CorrespondenceEditForm(instance=correspondence)
+
+    return render(
+        request,
+        "correspondence/edit.html",
+        {"form": form, "correspondence": correspondence},
+    )
 
 
 def _parse_bulk_csv(csv_file):
@@ -363,6 +420,7 @@ def correspondence_detail(request, pk):
             "can_reassign": _can_reassign(request.user, correspondence),
             "can_act_as_holder": _can_act_as_holder(request.user, correspondence),
             "can_reply": _can_reply(request.user, correspondence),
+            "can_edit": _can_edit(request.user, correspondence),
         },
     )
 

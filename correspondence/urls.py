@@ -21,6 +21,7 @@ urlpatterns = [
     path("correspondence/outgoing/<int:pk>/", views.outgoing_detail, name="outgoing-detail"),
     path("correspondence/outgoing/<int:pk>/send/", views.outgoing_send, name="outgoing-send"),
     path("correspondence/<int:pk>/", views.correspondence_detail, name="correspondence-detail"),
+    path("correspondence/<int:pk>/edit/", views.correspondence_edit, name="correspondence-edit"),
     path("correspondence/<int:pk>/reply/", views.correspondence_reply, name="correspondence-reply"),
     path("correspondence/<int:pk>/forward/", views.correspondence_forward, name="correspondence-forward"),
     path("correspondence/<int:pk>/reassign/", views.correspondence_reassign, name="correspondence-reassign"),

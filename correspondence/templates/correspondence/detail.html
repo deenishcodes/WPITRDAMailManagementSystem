@@ -41,7 +41,34 @@
       </div>
     </div>
 
-    {% if can_forward or can_reassign or can_act_as_holder or can_reply %}
+    <div class="card shadow-sm mb-3">
+      <div class="card-body p-4">
+        {% with status=correspondence.status %}
+        <div class="d-flex align-items-center">
+          <div class="text-center" style="width: 6rem;">
+            <div class="rounded-circle mx-auto d-flex align-items-center justify-content-center bg-success text-white" style="width: 2rem; height: 2rem;">1</div>
+            <div class="small mt-1">Received</div>
+          </div>
+          <div class="flex-fill" style="height: 3px; background-color: {% if status != 'new' %}#198754{% else %}#dee2e6{% endif %};"></div>
+          <div class="text-center" style="width: 6rem;">
+            <div class="rounded-circle mx-auto d-flex align-items-center justify-content-center {% if status == 'new' %}bg-secondary{% elif status == 'closed' %}bg-success{% else %}bg-primary{% endif %} text-white" style="width: 2rem; height: 2rem;">2</div>
+            <div class="small mt-1">
+              {% if status == 'assigned' %}With {{ correspondence.current_holder|default:"next officer" }}
+              {% elif status == 'pending' %}Pending
+              {% else %}In progress{% endif %}
+            </div>
+          </div>
+          <div class="flex-fill" style="height: 3px; background-color: {% if status == 'closed' %}#198754{% else %}#dee2e6{% endif %};"></div>
+          <div class="text-center" style="width: 6rem;">
+            <div class="rounded-circle mx-auto d-flex align-items-center justify-content-center {% if status == 'closed' %}bg-success{% else %}bg-secondary{% endif %} text-white" style="width: 2rem; height: 2rem;">3</div>
+            <div class="small mt-1">Closed</div>
+          </div>
+        </div>
+        {% endwith %}
+      </div>
+    </div>
+
+    {% if can_forward or can_reassign or can_act_as_holder or can_reply or can_edit %}
       <div class="card shadow-sm mb-3">
         <div class="card-body p-4">
           <h2 class="h6 mb-3">Actions</h2>
@@ -54,6 +81,9 @@
             {% endif %}
             {% if can_reply %}
               <a href="{% url 'correspondence-reply' correspondence.pk %}" class="btn btn-outline-primary btn-sm">Reply</a>
+            {% endif %}
+            {% if can_edit %}
+              <a href="{% url 'correspondence-edit' correspondence.pk %}" class="btn btn-outline-secondary btn-sm">Edit</a>
             {% endif %}
             {% if can_act_as_holder %}
               <form method="post" action="{% url 'correspondence-close' correspondence.pk %}" class="d-inline">
