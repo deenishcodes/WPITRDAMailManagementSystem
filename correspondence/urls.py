@@ -5,6 +5,16 @@ from . import views
 urlpatterns = [
     path("correspondence/", views.correspondence_list, name="correspondence-list"),
     path("correspondence/register/", views.correspondence_register, name="correspondence-register"),
+    path(
+        "correspondence/bulk-register/",
+        views.correspondence_bulk_register,
+        name="correspondence-bulk-register",
+    ),
+    path(
+        "correspondence/bulk-register/template.csv",
+        views.correspondence_bulk_register_template,
+        name="correspondence-bulk-register-template",
+    ),
     path("correspondence/<int:pk>/", views.correspondence_detail, name="correspondence-detail"),
     path("correspondence/<int:pk>/forward/", views.correspondence_forward, name="correspondence-forward"),
     path("correspondence/<int:pk>/reassign/", views.correspondence_reassign, name="correspondence-reassign"),

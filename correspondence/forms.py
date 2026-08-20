@@ -35,6 +35,26 @@ class CorrespondenceRegisterForm(forms.ModelForm):
         }
 
 
+class BulkRegisterForm(forms.Form):
+    csv_file = forms.FileField(
+        label="CSV file",
+        help_text=(
+            "Header row required: subject, sender_name, sender_address, date_received "
+            "(YYYY-MM-DD), received_via, remarks, department (name or short code), due_date. "
+            "sender_address, received_via, remarks, and due_date may be left blank."
+        ),
+        widget=forms.ClearableFileInput(attrs={"class": "form-control", "accept": ".csv"}),
+    )
+
+    def clean_csv_file(self):
+        f = self.cleaned_data["csv_file"]
+        if not f.name.lower().endswith(".csv"):
+            raise forms.ValidationError("Please upload a .csv file.")
+        if f.size > 2 * 1024 * 1024:
+            raise forms.ValidationError("File is too large (max 2MB).")
+        return f
+
+
 class ForwardToSubDivisionForm(forms.Form):
     """Head of Branch forwarding while the Sub-Branch tier is enabled."""
 

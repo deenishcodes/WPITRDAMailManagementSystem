@@ -8,14 +8,20 @@ Phase 2c plan.
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import models
 from django_tenants.test.cases import TenantTestCase
 
 from orgstructure.models import Department, Division, SubDivision, TenantWorkflowConfig
 
 from .models import Correspondence, RoutingEvent, next_registration_number
+from .views import _parse_bulk_csv
 
 User = get_user_model()
+
+
+def _csv_file(text):
+    return SimpleUploadedFile("bulk.csv", text.encode("utf-8"), content_type="text/csv")
 
 
 class RegistrationNumberTests(TenantTestCase):
@@ -26,6 +32,65 @@ class RegistrationNumberTests(TenantTestCase):
         suffixes = [int(n.split("/")[1]) for n in numbers]
         self.assertEqual(suffixes, sorted(suffixes), "numbers must increment in call order")
         self.assertEqual(suffixes[-1] - suffixes[0], 4)
+
+
+class BulkRegisterCsvTests(TenantTestCase):
+    def setUp(self):
+        self.dept = Department.objects.create(name="Land Administration", short_code="LA")
+
+    def test_valid_rows_parse_cleanly(self):
+        csv_text = (
+            "subject,sender_name,sender_address,date_received,received_via,remarks,department,due_date\n"
+            "Test letter,A. Perera,123 Main St,2026-08-15,Post,,Land Administration,\n"
+            "Another letter,N. Silva,,2026-08-16,Email,note,LA,2026-09-01\n"
+        )
+        rows, errors = _parse_bulk_csv(_csv_file(csv_text))
+        self.assertEqual(errors, [])
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["department"], self.dept)
+        self.assertEqual(rows[1]["department"], self.dept, "should match by short_code too")
+        self.assertEqual(rows[1]["due_date"].isoformat(), "2026-09-01")
+
+    def test_missing_required_column_is_rejected(self):
+        csv_text = "subject,sender_name,date_received\nX,Y,2026-08-15\n"
+        rows, errors = _parse_bulk_csv(_csv_file(csv_text))
+        self.assertEqual(rows, [])
+        self.assertTrue(any("department" in e for e in errors))
+
+    def test_unknown_department_reported_per_row(self):
+        csv_text = (
+            "subject,sender_name,date_received,department\n"
+            "X,Y,2026-08-15,Nonexistent Department\n"
+        )
+        rows, errors = _parse_bulk_csv(_csv_file(csv_text))
+        self.assertEqual(rows, [])
+        self.assertEqual(len(errors), 1)
+        self.assertIn("Row 2", errors[0])
+        self.assertIn("Nonexistent Department", errors[0])
+
+    def test_invalid_date_reported_per_row(self):
+        csv_text = (
+            "subject,sender_name,date_received,department\n"
+            "X,Y,not-a-date,Land Administration\n"
+        )
+        rows, errors = _parse_bulk_csv(_csv_file(csv_text))
+        self.assertEqual(rows, [])
+        self.assertIn("date_received", errors[0])
+
+    def test_one_bad_row_among_good_rows_reports_only_the_bad_one(self):
+        # _parse_bulk_csv itself returns whatever parsed cleanly alongside
+        # per-row errors; correspondence_bulk_register is what enforces
+        # all-or-nothing by only calling .create() when errors is empty.
+        csv_text = (
+            "subject,sender_name,date_received,department\n"
+            "Good one,A,2026-08-15,Land Administration\n"
+            "Bad one,B,2026-08-16,Nowhere\n"
+        )
+        rows, errors = _parse_bulk_csv(_csv_file(csv_text))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["subject"], "Good one")
+        self.assertEqual(len(errors), 1)
+        self.assertIn("Row 3", errors[0])
 
 
 class SearchTests(TenantTestCase):

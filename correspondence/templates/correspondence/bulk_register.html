@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Bulk register correspondence — Mail Management System</title>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+  <div class="container" style="max-width: 640px; margin-top: 3rem;">
+    <div class="card shadow-sm">
+      <div class="card-body p-4">
+        <h1 class="h4 mb-3">Bulk register correspondence</h1>
+
+        {% if messages %}
+          {% for message in messages %}
+            <div class="alert alert-{{ message.tags|default:'info' }}">{{ message }}</div>
+          {% endfor %}
+        {% endif %}
+
+        <p class="text-muted small">
+          Upload a CSV to register several letters at once. All rows are
+          validated before anything is saved — if any row has a problem,
+          nothing is registered and you'll see exactly which rows to fix.
+          <a href="{% url 'correspondence-bulk-register-template' %}">Download a template CSV</a>.
+        </p>
+
+        {% if errors %}
+          <div class="alert alert-danger">
+            <strong>Nothing was registered — fix these and try again:</strong>
+            <ul class="mb-0">
+              {% for error in errors %}<li>{{ error }}</li>{% endfor %}
+            </ul>
+          </div>
+        {% endif %}
+
+        {% if form.non_field_errors %}
+          <div class="alert alert-danger">{{ form.non_field_errors }}</div>
+        {% endif %}
+
+        <form method="post" enctype="multipart/form-data">
+          {% csrf_token %}
+          {% for field in form %}
+            <div class="mb-3">
+              <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+              {{ field }}
+              {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+              {% if field.errors %}<div class="text-danger small">{{ field.errors }}</div>{% endif %}
+            </div>
+          {% endfor %}
+          <button type="submit" class="btn btn-primary">Upload and register</button>
+          <a href="{% url 'correspondence-register' %}" class="btn btn-outline-secondary">Register one instead</a>
+        </form>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
