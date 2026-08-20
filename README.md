@@ -32,6 +32,7 @@ No formal spec document exists for the correspondence workflow itself — this w
 - **Search** — the correspondence list (`/correspondence/`) has a `q` search box matching registration number, subject, or sender name (case-insensitive substring), combinable with the status filter and paginated results.
 - **Bulk registration** (`/correspondence/bulk-register/`) — Postal Officer uploads a CSV to register several letters at once. All-or-nothing: every row is validated first, and if any row has a problem nothing is registered — the response names exactly which rows to fix, so a large batch never leaves the register in a half-imported state.
 - **File attachments** — anyone who can view a letter can attach supporting documents to it (PDF/Word/Excel/image, 15MB max) and download what's already there. Local filesystem storage under `MEDIA_ROOT`, written to a tenant-schema-prefixed path for logical separation — **not** the same strength of guarantee as the Postgres schema boundary the rest of this project relies on, see the comment in `config/settings.py`. Deliberately **not** served via a generic `/media/...` URL, since that has no auth at all; downloads only ever go through an authenticated view that re-checks `visible_to()` before streaming the file, so attachment access follows the same rules as everything else.
+- **Reports** (`/correspondence/reports/`) — counts by status and department, an overdue count, and average turnaround for closed letters (approximated from `updated_at`, since closing is the last action a closed letter can ever receive), scoped by the same `visible_to(user)` as the rest of the app rather than a separate reporting permission model. Plain HTML tables, no charting library — matches the rest of the project's minimal-dependency style. CSV export via `?format=csv`.
 - **`User.sub_division`** — a field Phase 2b didn't have; added because Sub-Branch Officer visibility has nothing to filter on without it.
 - **Dashboard** now shows real new/assigned/pending/overdue/closed counts, scoped the same way.
 - **`correspondence/tests.py`** — the first automated test coverage in this project (registration-number sequencing, visibility per role, tier-snapshot immutability). Everything before this was validated purely by hand against live docker-compose Postgres; this phase's concurrency and business-rule logic was judged trickier than what eyeballing alone reliably catches.
@@ -98,7 +99,7 @@ docker compose exec web python manage.py test correspondence
 - Outgoing/reply correspondence — a different numbering/threading concept, its own phase
 - Multi-level approval/sign-off beyond the single forward chain (register → Head of Branch → [Sub-Branch] → Subject Officer → closed) — nothing in the existing role names implies more than this
 - Automatic SLA/due-date escalation — `due_date` is a plain manually-set field; overdue is computed at query time, nothing flips it automatically
-- Email notifications, reports — later phases per Section 9 (though `RoutingEvent` gives reports a data source to build on later)
+- Email notifications — later phase per Section 9
 - Production security hardening — Phase 2h
 - No Sri Lanka-hosted production deployment target — still needs confirming with WPITRDA's infrastructure team (Section 10, Q11)
 

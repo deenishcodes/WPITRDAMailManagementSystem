@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Reports — Mail Management System</title>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+  <div class="container" style="max-width: 720px; margin-top: 3rem;">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <h1 class="h4 mb-0">Reports</h1>
+      <div>
+        <a href="?format=csv" class="btn btn-outline-primary btn-sm">Download CSV</a>
+        <a href="{% url 'correspondence-list' %}" class="btn btn-outline-secondary btn-sm">Correspondence</a>
+      </div>
+    </div>
+    <p class="text-muted small">
+      Scoped to what you can see — the same visibility rules as the
+      correspondence list. A Head of Branch sees their department's
+      figures, a superuser sees everything tenant-wide.
+    </p>
+
+    <div class="row row-cols-3 g-2 text-center mb-4">
+      <div class="col">
+        <div class="border rounded p-2">
+          <div class="h5 mb-0">{{ total_count }}</div>
+          <div class="small text-muted">Total</div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="border rounded p-2 border-danger">
+          <div class="h5 mb-0 text-danger">{{ overdue_count }}</div>
+          <div class="small text-muted">Overdue</div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="border rounded p-2">
+          <div class="h5 mb-0">{% if avg_turnaround %}{{ avg_turnaround }}{% else %}—{% endif %}</div>
+          <div class="small text-muted">Avg. turnaround (closed)</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mb-3">
+      <div class="card-body p-4">
+        <h2 class="h6 mb-3">By status</h2>
+        <table class="table table-sm mb-0">
+          <tbody>
+            {% for row in status_counts %}
+              <tr><td>{{ row.label }}</td><td class="text-end">{{ row.count }}</td></tr>
+            {% empty %}
+              <tr><td class="text-muted">No correspondence to show.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card shadow-sm">
+      <div class="card-body p-4">
+        <h2 class="h6 mb-3">By department</h2>
+        <table class="table table-sm mb-0">
+          <tbody>
+            {% for row in department_counts %}
+              <tr><td>{{ row.label }}</td><td class="text-end">{{ row.count }}</td></tr>
+            {% empty %}
+              <tr><td class="text-muted">No correspondence to show.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

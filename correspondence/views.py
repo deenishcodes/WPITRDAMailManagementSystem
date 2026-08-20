@@ -7,8 +7,10 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.db import models, transaction
+from django.db.models import Avg, Count, DurationField, ExpressionWrapper, F
 from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 from django.utils.dateparse import parse_date
 
 from orgstructure.models import Department, TenantWorkflowConfig
@@ -570,3 +572,71 @@ def correspondence_download_attachment(request, pk, attachment_id):
     return FileResponse(
         attachment.file.open("rb"), as_attachment=True, filename=attachment.original_filename
     )
+
+
+def _reports_data(user):
+    """
+    Aggregates over Correspondence.objects.visible_to(user) — reports show
+    whatever a user could already see individually, scoped the same way as
+    every list/detail view, rather than inventing a separate permission
+    model just for reporting.
+
+    Average turnaround uses `updated_at` on CLOSED letters as a proxy for
+    "when it was closed": correspondence_close is the only action a closed
+    letter can ever receive again (every other action's permission check
+    returns False once status is CLOSED), so updated_at is reliably the
+    close timestamp for those rows, without needing a dedicated closed_at
+    field.
+    """
+    qs = Correspondence.objects.visible_to(user)
+    status_labels = dict(Correspondence.Status.choices)
+
+    status_counts = [
+        {"label": status_labels.get(row["status"], row["status"]), "count": row["count"]}
+        for row in qs.values("status").annotate(count=Count("id")).order_by("status")
+    ]
+    department_counts = [
+        {"label": row["department__name"], "count": row["count"]}
+        for row in qs.values("department__name").annotate(count=Count("id")).order_by("-count")
+    ]
+    overdue_count = (
+        qs.filter(due_date__lt=timezone.localdate()).exclude(status=Correspondence.Status.CLOSED).count()
+    )
+    avg_turnaround = qs.filter(status=Correspondence.Status.CLOSED).annotate(
+        turnaround=ExpressionWrapper(F("updated_at") - F("created_at"), output_field=DurationField())
+    ).aggregate(avg=Avg("turnaround"))["avg"]
+
+    return {
+        "total_count": qs.count(),
+        "status_counts": status_counts,
+        "department_counts": department_counts,
+        "overdue_count": overdue_count,
+        "avg_turnaround": avg_turnaround,
+    }
+
+
+@login_required
+def correspondence_reports(request):
+    data = _reports_data(request.user)
+
+    if request.GET.get("format") == "csv":
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = 'attachment; filename="correspondence_report.csv"'
+        writer = csv.writer(response)
+        writer.writerow(["Metric", "Value"])
+        writer.writerow(["Total correspondence", data["total_count"]])
+        writer.writerow(["Overdue", data["overdue_count"]])
+        writer.writerow(
+            ["Average turnaround (closed letters)", str(data["avg_turnaround"]) if data["avg_turnaround"] else "N/A"]
+        )
+        writer.writerow([])
+        writer.writerow(["Status", "Count"])
+        for row in data["status_counts"]:
+            writer.writerow([row["label"], row["count"]])
+        writer.writerow([])
+        writer.writerow(["Department", "Count"])
+        for row in data["department_counts"]:
+            writer.writerow([row["label"], row["count"]])
+        return response
+
+    return render(request, "correspondence/reports.html", data)

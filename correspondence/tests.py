@@ -6,10 +6,13 @@ not replace) the manual live-docker-compose walkthrough described in the
 Phase 2c plan.
 """
 
+from datetime import timedelta
+
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import models
+from django.utils import timezone
 from django_tenants.test.cases import TenantTestCase
 
 from orgstructure.models import Department, Division, SubDivision, TenantWorkflowConfig
@@ -22,7 +25,7 @@ from .models import (
     attachment_upload_path,
     next_registration_number,
 )
-from .views import _parse_bulk_csv
+from .views import _parse_bulk_csv, _reports_data
 
 User = get_user_model()
 
@@ -39,6 +42,73 @@ class RegistrationNumberTests(TenantTestCase):
         suffixes = [int(n.split("/")[1]) for n in numbers]
         self.assertEqual(suffixes, sorted(suffixes), "numbers must increment in call order")
         self.assertEqual(suffixes[-1] - suffixes[0], 4)
+
+
+class ReportsTests(TenantTestCase):
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Land Administration")
+        self.dept_b = Department.objects.create(name="Finance")
+        g_postal = Group.objects.create(name="Postal Officer")
+        self.postal = User.objects.create_user("postal", password="x")
+        self.postal.groups.add(g_postal)
+
+        g_hob = Group.objects.create(name="Head of Branch")
+        self.hob_a = User.objects.create_user("hob_a", password="x", department=self.dept_a)
+        self.hob_a.groups.add(g_hob)
+
+        Correspondence.objects.create(
+            registration_number="2026/00001", subject="A", sender_name="X",
+            date_received="2026-01-01", department=self.dept_a, registered_by=self.postal,
+            status=Correspondence.Status.NEW,
+        )
+        Correspondence.objects.create(
+            registration_number="2026/00002", subject="B", sender_name="X",
+            date_received="2026-01-01", department=self.dept_a, registered_by=self.postal,
+            status=Correspondence.Status.ASSIGNED, due_date="2020-01-01",  # overdue
+        )
+        closed = Correspondence.objects.create(
+            registration_number="2026/00003", subject="C", sender_name="X",
+            date_received="2026-01-01", department=self.dept_a, registered_by=self.postal,
+            status=Correspondence.Status.CLOSED,
+        )
+        # .update() bypasses auto_now/auto_now_add (those only apply in
+        # Model.save()), letting us pin an exact turnaround duration.
+        now = timezone.now()
+        Correspondence.objects.filter(pk=closed.pk).update(
+            created_at=now - timedelta(days=2), updated_at=now
+        )
+
+        # In a different department — should be invisible to hob_a.
+        Correspondence.objects.create(
+            registration_number="2026/00004", subject="D", sender_name="X",
+            date_received="2026-01-01", department=self.dept_b, registered_by=self.postal,
+            status=Correspondence.Status.NEW,
+        )
+
+    def test_totals_and_status_breakdown(self):
+        data = _reports_data(self.postal)  # Postal Officer sees everything they registered
+        self.assertEqual(data["total_count"], 4)
+        counts = {row["label"]: row["count"] for row in data["status_counts"]}
+        self.assertEqual(counts.get("New"), 2)
+        self.assertEqual(counts.get("Assigned"), 1)
+        self.assertEqual(counts.get("Closed"), 1)
+
+    def test_overdue_count(self):
+        data = _reports_data(self.postal)
+        self.assertEqual(data["overdue_count"], 1)
+
+    def test_average_turnaround_for_closed_letters(self):
+        data = _reports_data(self.postal)
+        self.assertIsNotNone(data["avg_turnaround"])
+        self.assertAlmostEqual(
+            data["avg_turnaround"].total_seconds(), timedelta(days=2).total_seconds(), delta=5
+        )
+
+    def test_scoped_to_visible_letters_only(self):
+        data = _reports_data(self.hob_a)
+        self.assertEqual(data["total_count"], 3, "hob_a must not see dept_b's letter in the totals")
+        departments = {row["label"] for row in data["department_counts"]}
+        self.assertEqual(departments, {"Land Administration"})
 
 
 class AttachmentTests(TenantTestCase):
