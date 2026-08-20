@@ -25,6 +25,7 @@ from .forms import (
     ReassignDepartmentForm,
 )
 from .models import Correspondence, CorrespondenceAttachment, RoutingEvent, next_registration_number
+from .notifications import notify_new_holder, notify_registrant_closed
 
 User = get_user_model()
 
@@ -374,6 +375,7 @@ def correspondence_forward(request, pk):
         form = form_class(request.POST, **form_kwargs)
         if form.is_valid():
             note = form.cleaned_data.get("note", "")
+            newly_named_holder = None
             with transaction.atomic():
                 if head_of_branch_stage and tier_enabled:
                     sub_division = form.cleaned_data["sub_division"]
@@ -403,6 +405,9 @@ def correspondence_forward(request, pk):
                         sub_branch_tier_enabled_snapshot=(False if head_of_branch_stage else None),
                         note=note,
                     )
+                    newly_named_holder = to_user
+            if newly_named_holder:
+                notify_new_holder(correspondence, newly_named_holder)
             messages.success(request, "Forwarded.")
             return _redirect_after_action(request, correspondence)
     else:
@@ -442,6 +447,7 @@ def correspondence_reassign(request, pk):
         form = form_class(request.POST, **form_kwargs)
         if form.is_valid():
             note = form.cleaned_data.get("note", "")
+            newly_named_holder = None
             with transaction.atomic():
                 if form_class is ReassignDepartmentForm:
                     new_department = form.cleaned_data["department"]
@@ -478,6 +484,9 @@ def correspondence_reassign(request, pk):
                         to_user=to_user,
                         note=note,
                     )
+                    newly_named_holder = to_user
+            if newly_named_holder:
+                notify_new_holder(correspondence, newly_named_holder)
             messages.success(request, "Reassigned.")
             return _redirect_after_action(request, correspondence)
     else:
@@ -529,6 +538,7 @@ def correspondence_close(request, pk):
             action=RoutingEvent.Action.CLOSE,
             note=request.POST.get("note", ""),
         )
+        notify_registrant_closed(correspondence)
         messages.success(request, "Closed.")
 
     return redirect("correspondence-detail", pk=pk)

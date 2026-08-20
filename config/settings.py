@@ -5,8 +5,8 @@ This wires up django-tenants for schema-per-tenant multi-tenancy, per the
 architecture decision in Section 7 of the Phase 1 analysis document.
 
 Not yet included (deliberately — later phases):
-  - accounts / orgstructure / correspondence / audit / reports apps (Phase 2b+)
-  - email backend configuration for notifications (Phase 2d/2f)
+  - audit app (reporting/analytics beyond correspondence.RoutingEvent + the
+    correspondence reports screen)
   - production-hardened security settings (Phase 2h)
 """
 
@@ -166,6 +166,22 @@ STATIC_URL = "static/"
 # because it's a real route.
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
+
+# Email notifications (Phase 2c+). Defaults to the console backend —
+# emails print to the web container's logs rather than actually sending —
+# so this runs with zero external configuration out of the box. Swap
+# EMAIL_BACKEND to django.core.mail.backends.smtp.EmailBackend and set the
+# EMAIL_HOST_* values in .env to send real email; nothing in the sending
+# code (correspondence/notifications.py) needs to change either way.
+EMAIL_BACKEND = config(
+    "EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend"
+)
+DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="mms@example.org")
+EMAIL_HOST = config("EMAIL_HOST", default="")
+EMAIL_PORT = config("EMAIL_PORT", default=587, cast=int)
+EMAIL_HOST_USER = config("EMAIL_HOST_USER", default="")
+EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD", default="")
+EMAIL_USE_TLS = config("EMAIL_USE_TLS", default=True, cast=bool)
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

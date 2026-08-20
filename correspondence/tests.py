@@ -10,6 +10,7 @@ from datetime import timedelta
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
+from django.core import mail
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import models
 from django.utils import timezone
@@ -25,6 +26,7 @@ from .models import (
     attachment_upload_path,
     next_registration_number,
 )
+from .notifications import notify_new_holder, notify_registrant_closed
 from .views import _parse_bulk_csv, _reports_data
 
 User = get_user_model()
@@ -42,6 +44,37 @@ class RegistrationNumberTests(TenantTestCase):
         suffixes = [int(n.split("/")[1]) for n in numbers]
         self.assertEqual(suffixes, sorted(suffixes), "numbers must increment in call order")
         self.assertEqual(suffixes[-1] - suffixes[0], 4)
+
+
+class NotificationTests(TenantTestCase):
+    def setUp(self):
+        self.dept = Department.objects.create(name="Land Administration")
+        self.registrant = User.objects.create_user("postal", password="x", email="postal@example.org")
+        self.officer = User.objects.create_user("officer", password="x", email="officer@example.org")
+        self.letter = Correspondence.objects.create(
+            registration_number="2026/00001",
+            subject="Test letter",
+            sender_name="Someone",
+            date_received="2026-01-01",
+            department=self.dept,
+            registered_by=self.registrant,
+        )
+
+    def test_notify_new_holder_sends_email(self):
+        notify_new_holder(self.letter, self.officer)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn(self.officer.email, mail.outbox[0].to)
+        self.assertIn("2026/00001", mail.outbox[0].subject)
+
+    def test_notify_registrant_closed_sends_email(self):
+        notify_registrant_closed(self.letter)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn(self.registrant.email, mail.outbox[0].to)
+
+    def test_recipient_with_no_email_is_skipped_silently(self):
+        no_email_user = User.objects.create_user("noemail", password="x")
+        notify_new_holder(self.letter, no_email_user)
+        self.assertEqual(len(mail.outbox), 0)
 
 
 class ReportsTests(TenantTestCase):
