@@ -10,7 +10,7 @@
 
 - Docker + `django-tenants` project structure
 - Shared/public schema (the tenant registry: `tenants.Client` / `tenants.Domain`)
-- Self-service signup flow (`signup` app) that automatically provisions a real Postgres schema per organisation
+- Self-service signup flow (`signup` app) that automatically provisions a real Postgres schema per organisation, seeds its default roles, and creates its first admin account — genuinely self-service end-to-end, not just schema provisioning. (This last part was added later, after a real signup left an operator having to manually run `seed_roles`/`createsuperuser` by hand before anyone could log in — see `signup/forms.py`.)
 - `bootstrap_public_tenant` management command, replacing an earlier manual multi-line shell session
 
 ## What's new in Phase 2b
@@ -73,10 +73,8 @@ Then:
 
 - Visit `http://localhost:8000/` → signup form (public schema)
 - Visit `http://localhost:8000/admin/` → tenant registry + org structure admin
-- Sign up a test organisation, e.g. subdomain `wpsecretariat` — its schema automatically gets all the TENANT_APPS tables too, since new tenants are always migrated with whatever migration files exist at creation time
-- Seed its roles too: `docker compose exec web python manage.py tenant_command seed_roles --schema=wpsecretariat`
-- Create an admin user scoped to that schema: `docker compose exec web python manage.py tenant_command createsuperuser --schema=wpsecretariat`
-- In `/admin/`, give some users a Department/Division/SubDivision and add them to a role Group (Postal Officer, Head of Branch, Sub-Branch Officer, Subject Officer, Viewer) to exercise the correspondence workflow.
+- Sign up a test organisation, e.g. subdomain `wpsecretariat` — its schema automatically gets all the TENANT_APPS tables too (new tenants are always migrated with whatever migration files exist at creation time), its default roles are seeded, and the admin username/password you chose on the form is ready to log in with immediately — no extra CLI steps needed.
+- Log in at `http://wpsecretariat.mms.local:8000/login/` with that account, then in `/admin/`, give some users a Department/Division/SubDivision and add them to a role Group (Postal Officer, Head of Branch, Sub-Branch Officer, Subject Officer, Viewer) to exercise the correspondence workflow.
 
 (No local wildcard DNS for `*.mms.local`? Test via `curl -H "Host: wpsecretariat.mms.local" http://localhost:8000/` instead.)
 
