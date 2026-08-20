@@ -16,7 +16,12 @@ urlpatterns = [
         views.correspondence_bulk_register_template,
         name="correspondence-bulk-register-template",
     ),
+    path("correspondence/outgoing/", views.outgoing_list, name="outgoing-list"),
+    path("correspondence/outgoing/new/", views.outgoing_register, name="outgoing-register"),
+    path("correspondence/outgoing/<int:pk>/", views.outgoing_detail, name="outgoing-detail"),
+    path("correspondence/outgoing/<int:pk>/send/", views.outgoing_send, name="outgoing-send"),
     path("correspondence/<int:pk>/", views.correspondence_detail, name="correspondence-detail"),
+    path("correspondence/<int:pk>/reply/", views.correspondence_reply, name="correspondence-reply"),
     path("correspondence/<int:pk>/forward/", views.correspondence_forward, name="correspondence-forward"),
     path("correspondence/<int:pk>/reassign/", views.correspondence_reassign, name="correspondence-reassign"),
     path(

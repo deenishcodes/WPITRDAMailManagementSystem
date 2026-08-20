@@ -22,9 +22,17 @@ from .forms import (
     ForwardToSubDivisionForm,
     ForwardToUserForm,
     MarkPendingForm,
+    OutgoingCorrespondenceForm,
     ReassignDepartmentForm,
 )
-from .models import Correspondence, CorrespondenceAttachment, RoutingEvent, next_registration_number
+from .models import (
+    Correspondence,
+    CorrespondenceAttachment,
+    OutgoingCorrespondence,
+    RegistrationCounter,
+    RoutingEvent,
+    next_registration_number,
+)
 from .notifications import notify_new_holder, notify_registrant_closed
 
 User = get_user_model()
@@ -83,6 +91,20 @@ def _can_act_as_holder(user, correspondence):
     """Mark-pending / close: only the named current holder (or a superuser)."""
     if correspondence.status == Correspondence.Status.CLOSED:
         return False
+    if user.is_superuser:
+        return True
+    return correspondence.current_holder_id == user.id
+
+
+def _can_reply(user, correspondence):
+    """
+    Same actor as _can_act_as_holder (the named current holder, or a
+    superuser) but deliberately WITHOUT the status != CLOSED guard —
+    drafting a reply doesn't mutate the inbound letter's own state the way
+    mark-pending/close/forward/reassign do, so there's no reason closing
+    should block a follow-up reply. This is a confirmed product decision,
+    not an oversight: don't "fix" this by reusing _can_act_as_holder as-is.
+    """
     if user.is_superuser:
         return True
     return correspondence.current_holder_id == user.id
@@ -326,6 +348,7 @@ def correspondence_detail(request, pk):
         "actor", "to_user", "to_department", "to_division", "to_sub_division"
     )
     attachments = correspondence.attachments.select_related("uploaded_by")
+    replies = correspondence.replies.select_related("drafted_by", "sent_by")
 
     return render(
         request,
@@ -335,9 +358,11 @@ def correspondence_detail(request, pk):
             "events": events,
             "attachments": attachments,
             "attachment_form": AttachmentUploadForm(),
+            "replies": replies,
             "can_forward": _can_forward(request.user, correspondence),
             "can_reassign": _can_reassign(request.user, correspondence),
             "can_act_as_holder": _can_act_as_holder(request.user, correspondence),
+            "can_reply": _can_reply(request.user, correspondence),
         },
     )
 
@@ -616,12 +641,21 @@ def _reports_data(user):
         turnaround=ExpressionWrapper(F("updated_at") - F("created_at"), output_field=DurationField())
     ).aggregate(avg=Avg("turnaround"))["avg"]
 
+    outgoing_qs = OutgoingCorrespondence.objects.visible_to(user)
+    outgoing_status_labels = dict(OutgoingCorrespondence.Status.choices)
+    outgoing_status_counts = [
+        {"label": outgoing_status_labels.get(row["status"], row["status"]), "count": row["count"]}
+        for row in outgoing_qs.values("status").annotate(count=Count("id")).order_by("status")
+    ]
+
     return {
         "total_count": qs.count(),
         "status_counts": status_counts,
         "department_counts": department_counts,
         "overdue_count": overdue_count,
         "avg_turnaround": avg_turnaround,
+        "outgoing_total_count": outgoing_qs.count(),
+        "outgoing_status_counts": outgoing_status_counts,
     }
 
 
@@ -647,6 +681,130 @@ def correspondence_reports(request):
         writer.writerow(["Department", "Count"])
         for row in data["department_counts"]:
             writer.writerow([row["label"], row["count"]])
+        writer.writerow([])
+        writer.writerow(["Outgoing total", data["outgoing_total_count"]])
+        writer.writerow(["Outgoing status", "Count"])
+        for row in data["outgoing_status_counts"]:
+            writer.writerow([row["label"], row["count"]])
         return response
 
     return render(request, "correspondence/reports.html", data)
+
+
+@login_required
+def outgoing_list(request):
+    qs = OutgoingCorrespondence.objects.visible_to(request.user).select_related(
+        "department", "drafted_by", "in_reply_to"
+    )
+
+    status = request.GET.get("status")
+    if status in OutgoingCorrespondence.Status.values:
+        qs = qs.filter(status=status)
+
+    paginator = Paginator(qs, 25)
+    page_obj = paginator.get_page(request.GET.get("page"))
+
+    return render(
+        request,
+        "correspondence/outgoing_list.html",
+        {
+            "page_obj": page_obj,
+            "status_choices": OutgoingCorrespondence.Status.choices,
+            "current_status": status,
+        },
+    )
+
+
+@login_required
+def outgoing_register(request):
+    """Standalone outgoing correspondence, not tied to any inbound letter — Postal Officer only."""
+    if not _in_group(request.user, "Postal Officer"):
+        raise PermissionDenied("Only Postal Officers can register outgoing correspondence.")
+
+    if request.method == "POST":
+        form = OutgoingCorrespondenceForm(request.POST)
+        if form.is_valid():
+            with transaction.atomic():
+                outgoing = form.save(commit=False)
+                outgoing.reference_number = next_registration_number(kind=RegistrationCounter.Kind.OUTGOING)
+                outgoing.drafted_by = request.user
+                outgoing.status = OutgoingCorrespondence.Status.DRAFT
+                outgoing.save()
+            messages.success(request, f"Drafted as {outgoing.reference_number}.")
+            return redirect("outgoing-detail", pk=outgoing.pk)
+    else:
+        form = OutgoingCorrespondenceForm()
+
+    return render(request, "correspondence/outgoing_register.html", {"form": form, "correspondence": None})
+
+
+@login_required
+def correspondence_reply(request, pk):
+    """Draft a reply to a specific inbound letter — the current holder only (see _can_reply)."""
+    correspondence = get_object_or_404(Correspondence.objects.visible_to(request.user), pk=pk)
+    if not _can_reply(request.user, correspondence):
+        raise PermissionDenied("You can't draft a reply to this letter.")
+
+    if request.method == "POST":
+        form = OutgoingCorrespondenceForm(request.POST, show_department=False)
+        if form.is_valid():
+            with transaction.atomic():
+                outgoing = form.save(commit=False)
+                outgoing.reference_number = next_registration_number(kind=RegistrationCounter.Kind.OUTGOING)
+                outgoing.in_reply_to = correspondence
+                outgoing.department = correspondence.department
+                outgoing.drafted_by = request.user
+                outgoing.status = OutgoingCorrespondence.Status.DRAFT
+                outgoing.save()
+            messages.success(request, f"Reply drafted as {outgoing.reference_number}.")
+            return redirect("outgoing-detail", pk=outgoing.pk)
+    else:
+        form = OutgoingCorrespondenceForm(show_department=False)
+
+    return render(
+        request,
+        "correspondence/outgoing_register.html",
+        {"form": form, "correspondence": correspondence},
+    )
+
+
+def _can_send_outgoing(user, outgoing):
+    """Only the drafter (or a superuser) can mark a draft sent, and only while it's still a draft."""
+    if outgoing.status != OutgoingCorrespondence.Status.DRAFT:
+        return False
+    return user.is_superuser or outgoing.drafted_by_id == user.id
+
+
+@login_required
+def outgoing_detail(request, pk):
+    outgoing = get_object_or_404(
+        OutgoingCorrespondence.objects.visible_to(request.user).select_related(
+            "department", "drafted_by", "sent_by", "in_reply_to"
+        ),
+        pk=pk,
+    )
+
+    return render(
+        request,
+        "correspondence/outgoing_detail.html",
+        {
+            "outgoing": outgoing,
+            "can_send": _can_send_outgoing(request.user, outgoing),
+        },
+    )
+
+
+@login_required
+def outgoing_send(request, pk):
+    outgoing = get_object_or_404(OutgoingCorrespondence.objects.visible_to(request.user), pk=pk)
+    if not _can_send_outgoing(request.user, outgoing):
+        raise PermissionDenied("You can't mark this as sent.")
+
+    if request.method == "POST":
+        outgoing.status = OutgoingCorrespondence.Status.SENT
+        outgoing.sent_by = request.user
+        outgoing.sent_date = timezone.localdate()
+        outgoing.save(update_fields=["status", "sent_by", "sent_date", "updated_at"])
+        messages.success(request, "Marked as sent.")
+
+    return redirect("outgoing-detail", pk=pk)

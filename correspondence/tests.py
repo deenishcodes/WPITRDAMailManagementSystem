@@ -22,12 +22,14 @@ from .forms import AttachmentUploadForm
 from .models import (
     Correspondence,
     CorrespondenceAttachment,
+    OutgoingCorrespondence,
+    RegistrationCounter,
     RoutingEvent,
     attachment_upload_path,
     next_registration_number,
 )
 from .notifications import notify_new_holder, notify_registrant_closed
-from .views import _parse_bulk_csv, _reports_data
+from .views import _can_reply, _can_send_outgoing, _parse_bulk_csv, _reports_data
 
 User = get_user_model()
 
@@ -536,3 +538,165 @@ class ReassignmentTests(TenantTestCase):
             _can_reassign(self.hob, letter),
             "once routed to a sub-division, the department-level Head of Branch stage has passed",
         )
+
+
+class OutgoingNumberingTests(TenantTestCase):
+    def test_incoming_and_outgoing_sequences_are_independent(self):
+        in1 = next_registration_number()
+        out1 = next_registration_number(kind=RegistrationCounter.Kind.OUTGOING)
+        in2 = next_registration_number()
+        out2 = next_registration_number(kind=RegistrationCounter.Kind.OUTGOING)
+
+        self.assertFalse(in1.startswith("OUT/"))
+        self.assertTrue(out1.startswith("OUT/"))
+        self.assertTrue(out2.startswith("OUT/"))
+
+        in_seq = [int(n.split("/")[1]) for n in (in1, in2)]
+        out_seq = [int(n.split("/")[2]) for n in (out1, out2)]
+        self.assertEqual(in_seq, [1, 2])
+        self.assertEqual(
+            out_seq, [1, 2], "outgoing sequence must not skip or collide because of interleaved incoming calls"
+        )
+
+
+class OutgoingVisibilityTests(TenantTestCase):
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Land Administration")
+        self.dept_b = Department.objects.create(name="Finance")
+        g_hob = Group.objects.create(name="Head of Branch")
+
+        self.drafter = User.objects.create_user("drafter", password="x")
+        self.hob_a = User.objects.create_user("hob_a", password="x", department=self.dept_a)
+        self.hob_a.groups.add(g_hob)
+        self.hob_b = User.objects.create_user("hob_b", password="x", department=self.dept_b)
+        self.hob_b.groups.add(g_hob)
+        self.bystander = User.objects.create_user("bystander", password="x")
+
+        self.draft = OutgoingCorrespondence.objects.create(
+            reference_number="OUT/2026/00001",
+            subject="Test reply",
+            recipient_name="Someone",
+            department=self.dept_a,
+            drafted_by=self.drafter,
+        )
+
+    def test_drafter_sees_own_draft(self):
+        visible = set(OutgoingCorrespondence.objects.visible_to(self.drafter).values_list("pk", flat=True))
+        self.assertEqual(visible, {self.draft.pk})
+
+    def test_head_of_branch_sees_department_drafts_they_did_not_write(self):
+        visible = set(OutgoingCorrespondence.objects.visible_to(self.hob_a).values_list("pk", flat=True))
+        self.assertEqual(visible, {self.draft.pk})
+
+    def test_head_of_branch_in_different_department_sees_nothing(self):
+        visible = set(OutgoingCorrespondence.objects.visible_to(self.hob_b).values_list("pk", flat=True))
+        self.assertEqual(visible, set())
+
+    def test_unrelated_user_sees_nothing(self):
+        visible = set(OutgoingCorrespondence.objects.visible_to(self.bystander).values_list("pk", flat=True))
+        self.assertEqual(visible, set())
+
+
+class CanReplyTests(TenantTestCase):
+    def setUp(self):
+        self.dept = Department.objects.create(name="Land Administration")
+        self.postal = User.objects.create_user("postal", password="x")
+        self.holder = User.objects.create_user("holder", password="x")
+        self.other = User.objects.create_user("other", password="x")
+
+    def _letter(self, **kwargs):
+        defaults = dict(
+            registration_number="2026/00001",
+            subject="Test",
+            sender_name="X",
+            date_received="2026-01-01",
+            department=self.dept,
+            registered_by=self.postal,
+            current_holder=self.holder,
+        )
+        defaults.update(kwargs)
+        return Correspondence.objects.create(**defaults)
+
+    def test_current_holder_can_reply_while_open(self):
+        letter = self._letter(status=Correspondence.Status.ASSIGNED)
+        self.assertTrue(_can_reply(self.holder, letter))
+
+    def test_current_holder_can_still_reply_after_closed(self):
+        # Confirmed product decision: replying doesn't mutate the inbound
+        # letter's own state, so closing must not block a follow-up reply
+        # the way it blocks forward/reassign/mark-pending/close. This is
+        # the one test that would catch an accidental regression back to
+        # mirroring _can_act_as_holder's CLOSED guard.
+        letter = self._letter(status=Correspondence.Status.CLOSED)
+        self.assertTrue(_can_reply(self.holder, letter))
+
+    def test_non_holder_cannot_reply(self):
+        letter = self._letter(status=Correspondence.Status.ASSIGNED)
+        self.assertFalse(_can_reply(self.other, letter))
+
+    def test_superuser_can_always_reply(self):
+        letter = self._letter(status=Correspondence.Status.CLOSED)
+        superuser = User.objects.create_superuser("admin", password="x")
+        self.assertTrue(_can_reply(superuser, letter))
+
+
+class OutgoingSendTests(TenantTestCase):
+    def setUp(self):
+        self.dept = Department.objects.create(name="Land Administration")
+        self.drafter = User.objects.create_user("drafter", password="x")
+        self.other = User.objects.create_user("other", password="x")
+        self.draft = OutgoingCorrespondence.objects.create(
+            reference_number="OUT/2026/00001",
+            subject="Test",
+            recipient_name="Someone",
+            department=self.dept,
+            drafted_by=self.drafter,
+        )
+
+    def test_drafter_can_send(self):
+        self.assertTrue(_can_send_outgoing(self.drafter, self.draft))
+
+    def test_other_user_cannot_send(self):
+        self.assertFalse(_can_send_outgoing(self.other, self.draft))
+
+    def test_superuser_can_send(self):
+        superuser = User.objects.create_superuser("admin", password="x")
+        self.assertTrue(_can_send_outgoing(superuser, self.draft))
+
+    def test_already_sent_cannot_be_sent_again(self):
+        self.draft.status = OutgoingCorrespondence.Status.SENT
+        self.draft.save(update_fields=["status"])
+        self.assertFalse(_can_send_outgoing(self.drafter, self.draft))
+        self.assertFalse(_can_send_outgoing(User.objects.create_superuser("admin", password="x"), self.draft))
+
+
+class OutgoingReportsTests(TenantTestCase):
+    def setUp(self):
+        self.dept = Department.objects.create(name="Land Administration")
+        g_postal = Group.objects.create(name="Postal Officer")
+        self.postal = User.objects.create_user("postal", password="x")
+        self.postal.groups.add(g_postal)
+
+        OutgoingCorrespondence.objects.create(
+            reference_number="OUT/2026/00001",
+            subject="A",
+            recipient_name="X",
+            department=self.dept,
+            drafted_by=self.postal,
+            status=OutgoingCorrespondence.Status.DRAFT,
+        )
+        OutgoingCorrespondence.objects.create(
+            reference_number="OUT/2026/00002",
+            subject="B",
+            recipient_name="X",
+            department=self.dept,
+            drafted_by=self.postal,
+            status=OutgoingCorrespondence.Status.SENT,
+        )
+
+    def test_outgoing_counts_appear_in_reports_data(self):
+        data = _reports_data(self.postal)
+        self.assertEqual(data["outgoing_total_count"], 2)
+        counts = {row["label"]: row["count"] for row in data["outgoing_status_counts"]}
+        self.assertEqual(counts.get("Draft"), 1)
+        self.assertEqual(counts.get("Sent"), 1)

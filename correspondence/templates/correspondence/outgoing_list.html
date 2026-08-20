@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Outgoing correspondence — Mail Management System</title>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+  <div class="container" style="max-width: 960px; margin-top: 3rem;">
+    {% if messages %}
+      {% for message in messages %}
+        <div class="alert alert-{{ message.tags|default:'info' }}">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <h1 class="h4 mb-0">Outgoing correspondence</h1>
+      <div>
+        <a href="{% url 'outgoing-register' %}" class="btn btn-primary btn-sm">New</a>
+        <a href="{% url 'correspondence-list' %}" class="btn btn-outline-secondary btn-sm">Incoming</a>
+      </div>
+    </div>
+
+    <div class="mb-3">
+      <a href="{% url 'outgoing-list' %}"
+         class="btn btn-sm {% if not current_status %}btn-secondary{% else %}btn-outline-secondary{% endif %}">All</a>
+      {% for value, label in status_choices %}
+        <a href="?status={{ value }}"
+           class="btn btn-sm {% if current_status == value %}btn-secondary{% else %}btn-outline-secondary{% endif %}">{{ label }}</a>
+      {% endfor %}
+    </div>
+
+    <div class="card shadow-sm">
+      <table class="table table-hover mb-0">
+        <thead>
+          <tr>
+            <th>Ref. No.</th>
+            <th>Subject</th>
+            <th>Recipient</th>
+            <th>Department</th>
+            <th>Status</th>
+            <th>In reply to</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for outgoing in page_obj %}
+            <tr>
+              <td><a href="{% url 'outgoing-detail' outgoing.pk %}">{{ outgoing.reference_number }}</a></td>
+              <td>{{ outgoing.subject }}</td>
+              <td>{{ outgoing.recipient_name }}</td>
+              <td>{{ outgoing.department }}</td>
+              <td>
+                <span class="badge {% if outgoing.status == 'sent' %}bg-success{% else %}bg-secondary{% endif %}">
+                  {{ outgoing.get_status_display }}
+                </span>
+              </td>
+              <td>
+                {% if outgoing.in_reply_to %}
+                  <a href="{% url 'correspondence-detail' outgoing.in_reply_to.pk %}">{{ outgoing.in_reply_to.registration_number }}</a>
+                {% else %}—{% endif %}
+              </td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="6" class="text-muted text-center py-4">No outgoing correspondence to show.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if page_obj.has_other_pages %}
+      <nav class="mt-3">
+        <ul class="pagination">
+          {% if page_obj.has_previous %}
+            <li class="page-item"><a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if current_status %}&status={{ current_status }}{% endif %}">Previous</a></li>
+          {% endif %}
+          <li class="page-item disabled"><span class="page-link">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span></li>
+          {% if page_obj.has_next %}
+            <li class="page-item"><a class="page-link" href="?page={{ page_obj.next_page_number }}{% if current_status %}&status={{ current_status }}{% endif %}">Next</a></li>
+          {% endif %}
+        </ul>
+      </nav>
+    {% endif %}
+  </div>
+</body>
+</html>

@@ -1,6 +1,12 @@
 from django.contrib import admin
 
-from .models import Correspondence, CorrespondenceAttachment, RegistrationCounter, RoutingEvent
+from .models import (
+    Correspondence,
+    CorrespondenceAttachment,
+    OutgoingCorrespondence,
+    RegistrationCounter,
+    RoutingEvent,
+)
 
 
 @admin.register(Correspondence)
@@ -30,10 +36,18 @@ class CorrespondenceAttachmentAdmin(admin.ModelAdmin):
     readonly_fields = ("uploaded_at",)
 
 
+@admin.register(OutgoingCorrespondence)
+class OutgoingCorrespondenceAdmin(admin.ModelAdmin):
+    list_display = ("reference_number", "subject", "department", "status", "drafted_by", "sent_date")
+    list_filter = ("status", "department")
+    search_fields = ("reference_number", "subject", "recipient_name")
+    readonly_fields = ("reference_number", "created_at", "updated_at")
+
+
 @admin.register(RegistrationCounter)
 class RegistrationCounterAdmin(admin.ModelAdmin):
     # Read-only — hand-editing this would desync the registration sequence.
-    list_display = ("year", "last_number")
+    list_display = ("year", "kind", "last_number")
 
     def has_add_permission(self, request):
         return False

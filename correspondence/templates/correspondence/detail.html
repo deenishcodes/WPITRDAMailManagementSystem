@@ -41,7 +41,7 @@
       </div>
     </div>
 
-    {% if can_forward or can_reassign or can_act_as_holder %}
+    {% if can_forward or can_reassign or can_act_as_holder or can_reply %}
       <div class="card shadow-sm mb-3">
         <div class="card-body p-4">
           <h2 class="h6 mb-3">Actions</h2>
@@ -51,6 +51,9 @@
             {% endif %}
             {% if can_reassign %}
               <a href="{% url 'correspondence-reassign' correspondence.pk %}" class="btn btn-outline-warning btn-sm">Reassign</a>
+            {% endif %}
+            {% if can_reply %}
+              <a href="{% url 'correspondence-reply' correspondence.pk %}" class="btn btn-outline-primary btn-sm">Reply</a>
             {% endif %}
             {% if can_act_as_holder %}
               <form method="post" action="{% url 'correspondence-close' correspondence.pk %}" class="d-inline">
@@ -93,6 +96,22 @@
           <button type="submit" class="btn btn-outline-secondary btn-sm text-nowrap">Upload</button>
         </form>
         <div class="form-text">PDF, Word, Excel, or image files, up to 15MB.</div>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mb-3">
+      <div class="card-body p-4">
+        <h2 class="h6 mb-3">Replies</h2>
+        <ul class="list-group list-group-flush">
+          {% for reply in replies %}
+            <li class="list-group-item small d-flex justify-content-between align-items-center">
+              <a href="{% url 'outgoing-detail' reply.pk %}">{{ reply.reference_number }} — {{ reply.subject }}</a>
+              <span class="badge {% if reply.status == 'sent' %}bg-success{% else %}bg-secondary{% endif %}">{{ reply.get_status_display }}</span>
+            </li>
+          {% empty %}
+            <li class="list-group-item small text-muted">No replies yet.</li>
+          {% endfor %}
+        </ul>
       </div>
     </div>
 

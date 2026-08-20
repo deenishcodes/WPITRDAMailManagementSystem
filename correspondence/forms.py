@@ -3,7 +3,12 @@ from django.contrib.auth import get_user_model
 
 from orgstructure.models import Department, SubDivision
 
-from .models import ALLOWED_ATTACHMENT_EXTENSIONS, MAX_ATTACHMENT_SIZE_BYTES, Correspondence
+from .models import (
+    ALLOWED_ATTACHMENT_EXTENSIONS,
+    MAX_ATTACHMENT_SIZE_BYTES,
+    Correspondence,
+    OutgoingCorrespondence,
+)
 
 User = get_user_model()
 
@@ -33,6 +38,33 @@ class CorrespondenceRegisterForm(forms.ModelForm):
             "department": forms.Select(attrs={"class": "form-select"}),
             "due_date": forms.DateInput(attrs={"class": "form-control", "type": "date"}),
         }
+
+
+class OutgoingCorrespondenceForm(forms.ModelForm):
+    """
+    Shared by both entry points (standalone draft and reply-to-inbound).
+    in_reply_to/drafted_by are always set programmatically by the view, not
+    exposed here — a user shouldn't be able to link a draft to an inbound
+    letter they can't see. department is only shown for a standalone draft;
+    for a reply it's inherited from the inbound letter and hidden (see
+    show_department below).
+    """
+
+    class Meta:
+        model = OutgoingCorrespondence
+        fields = ["subject", "recipient_name", "recipient_address", "remarks", "department"]
+        widgets = {
+            "subject": forms.TextInput(attrs={"class": "form-control"}),
+            "recipient_name": forms.TextInput(attrs={"class": "form-control"}),
+            "recipient_address": forms.Textarea(attrs={"class": "form-control", "rows": 2}),
+            "remarks": forms.Textarea(attrs={"class": "form-control", "rows": 3}),
+            "department": forms.Select(attrs={"class": "form-select"}),
+        }
+
+    def __init__(self, *args, show_department=True, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not show_department:
+            del self.fields["department"]
 
 
 class BulkRegisterForm(forms.Form):

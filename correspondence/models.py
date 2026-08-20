@@ -19,8 +19,11 @@ from django.utils import timezone
 
 class RegistrationCounter(models.Model):
     """
-    One row per calendar year, used to hand out sequential, human-readable
-    registration numbers ("2026/00001") safely under concurrent registration.
+    One row per (calendar year, kind), used to hand out sequential,
+    human-readable registration numbers ("2026/00001" for incoming,
+    "OUT/2026/00001" for outgoing) safely under concurrent registration.
+    Incoming and outgoing draw from independent sequences so neither
+    collides with or skips because of the other.
 
     A plain model (locked with select_for_update, see
     next_registration_number below) rather than a raw Postgres SEQUENCE,
@@ -31,30 +34,44 @@ class RegistrationCounter(models.Model):
     would not.
     """
 
-    year = models.PositiveIntegerField(unique=True)
+    class Kind(models.TextChoices):
+        INCOMING = "in", "Incoming"
+        OUTGOING = "out", "Outgoing"
+
+    year = models.PositiveIntegerField()
+    kind = models.CharField(max_length=3, choices=Kind.choices, default=Kind.INCOMING)
     last_number = models.PositiveIntegerField(default=0)
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["year", "kind"], name="unique_registration_counter_year_kind")
+        ]
+
     def __str__(self):
-        return f"{self.year} (last: {self.last_number})"
+        return f"{self.get_kind_display()} {self.year} (last: {self.last_number})"
 
 
-def next_registration_number():
+def next_registration_number(kind=RegistrationCounter.Kind.INCOMING):
     """
-    Allocates the next sequential registration number for the current year.
+    Allocates the next sequential registration number for the current year
+    and the given kind (incoming letters vs. outgoing correspondence).
 
     Must be called inside the same transaction.atomic() block as the
-    Correspondence.objects.create(...) it's for, so the counter increment
-    and the new row commit or roll back together. Deliberately not a
-    Correspondence.save()/pre_save hook — that would silently allocate a
-    new number on any unrelated save of an instance missing one.
+    Correspondence.objects.create(...) / OutgoingCorrespondence.objects.
+    create(...) it's for, so the counter increment and the new row commit or
+    roll back together. Deliberately not a save()/pre_save hook — that would
+    silently allocate a new number on any unrelated save of an instance
+    missing one.
     """
     year = timezone.localdate().year
     with transaction.atomic():
         counter, _ = RegistrationCounter.objects.select_for_update().get_or_create(
-            year=year, defaults={"last_number": 0}
+            year=year, kind=kind, defaults={"last_number": 0}
         )
         counter.last_number += 1
         counter.save(update_fields=["last_number"])
+        if kind == RegistrationCounter.Kind.OUTGOING:
+            return f"OUT/{year}/{counter.last_number:05d}"
         return f"{year}/{counter.last_number:05d}"
 
 
@@ -262,3 +279,84 @@ class CorrespondenceAttachment(models.Model):
 
     def __str__(self):
         return f"{self.original_filename} on {self.correspondence.registration_number}"
+
+
+class OutgoingCorrespondenceQuerySet(models.QuerySet):
+    def visible_to(self, user):
+        """
+        Simpler than Correspondence.visible_to: there's no multi-tier
+        routing chain to score visibility against here, just "who drafted
+        it" and "what department is it filed under." A Subject Officer
+        replying to a letter they hold, and a Postal Officer drafting a
+        standalone letter, both show up identically via drafted_by=user —
+        nobody hands an outgoing draft to someone else the way
+        current_holder works for inbound, so there's no separate
+        Subject-Officer-specific branch needed. The department branch is a
+        genuinely different actor (oversight of a whole department's
+        outgoing correspondence, not just what you personally drafted).
+        """
+        if user.is_superuser:
+            return self
+
+        filters = models.Q(drafted_by=user)
+        groups = set(user.groups.values_list("name", flat=True))
+        if ("Head of Branch" in groups or "Viewer" in groups) and user.department_id:
+            filters |= models.Q(department_id=user.department_id)
+        return self.filter(filters).distinct()
+
+
+class OutgoingCorrespondence(models.Model):
+    """
+    A letter this organisation sends — either a reply to a registered
+    inbound letter (in_reply_to set) or a standalone outgoing letter
+    (in_reply_to null). Deliberately simpler than Correspondence: no
+    RoutingEvent-equivalent audit log, because there's no view anywhere
+    that edits subject/recipient_name/recipient_address/remarks/department
+    after creation — the only two things that ever happen to a row are
+    creation (Draft) and the send action (status/sent_by/sent_date). That
+    makes updated_at a reliable proxy for "when it was sent" by
+    construction, the same way Correspondence.updated_at is a reliable
+    proxy for "when it was closed" once CLOSED blocks every other action —
+    just simpler here since there's no routing chain to log in the first
+    place. If an edit capability is ever added, that's the point to add a
+    real audit trail; don't build one now for a mutation path that doesn't
+    exist.
+    """
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        SENT = "sent", "Sent"
+
+    reference_number = models.CharField(max_length=20, unique=True, editable=False)
+    in_reply_to = models.ForeignKey(
+        Correspondence, null=True, blank=True, on_delete=models.SET_NULL, related_name="replies"
+    )
+    subject = models.CharField(max_length=300)
+    recipient_name = models.CharField(max_length=200)
+    recipient_address = models.TextField(blank=True)
+    remarks = models.TextField(blank=True)
+    # Filing metadata only, unlike Correspondence.department — there's no
+    # routing chain here, so no division/sub_division either. Set once at
+    # creation and never edited (no edit view exists for this model).
+    department = models.ForeignKey(
+        "orgstructure.Department", on_delete=models.PROTECT, related_name="outgoing_correspondence"
+    )
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    drafted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="drafted_outgoing"
+    )
+    sent_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    sent_date = models.DateField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    objects = OutgoingCorrespondenceQuerySet.as_manager()
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name_plural = "Outgoing correspondence"
+
+    def __str__(self):
+        return f"{self.reference_number} — {self.subject}"
