@@ -24,4 +24,14 @@ urlpatterns = [
         name="correspondence-mark-pending",
     ),
     path("correspondence/<int:pk>/close/", views.correspondence_close, name="correspondence-close"),
+    path(
+        "correspondence/<int:pk>/attachments/upload/",
+        views.correspondence_upload_attachment,
+        name="correspondence-upload-attachment",
+    ),
+    path(
+        "correspondence/<int:pk>/attachments/<int:attachment_id>/",
+        views.correspondence_download_attachment,
+        name="correspondence-download-attachment",
+    ),
 ]

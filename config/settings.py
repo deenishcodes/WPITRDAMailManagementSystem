@@ -147,6 +147,26 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 
+# Correspondence attachments (Phase 2c+). Local filesystem storage, not
+# object storage — matches "stay realistic for WPITRDA to run" (Section
+# 10, Q9). Files are written under a tenant-schema-named subdirectory (see
+# correspondence.models.attachment_upload_path) to keep tenants' uploads
+# logically separated on disk. NOTE this is *not* the same strength of
+# isolation as the Postgres schema-per-tenant boundary — it relies on the
+# upload path being correct, not a hard filesystem permission boundary —
+# so don't treat it as equivalent to the database-level guarantee.
+#
+# Deliberately NOT wired up with django.conf.urls.static's static() helper
+# in urls_tenants.py: that serves MEDIA_ROOT with no auth at all, which
+# would let anyone who knows/guesses a file path download it, bypassing
+# every visible_to() check this project relies on elsewhere. Attachments
+# are only ever fetched through correspondence.views.correspondence_
+# download_attachment, which re-checks visibility before streaming the
+# file — MEDIA_URL exists only because FileField needs it configured, not
+# because it's a real route.
+MEDIA_URL = "media/"
+MEDIA_ROOT = BASE_DIR / "media"
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # Security settings below are intentionally minimal for local dev.

@@ -3,7 +3,7 @@ from django.contrib.auth import get_user_model
 
 from orgstructure.models import Department, SubDivision
 
-from .models import Correspondence
+from .models import ALLOWED_ATTACHMENT_EXTENSIONS, MAX_ATTACHMENT_SIZE_BYTES, Correspondence
 
 User = get_user_model()
 
@@ -103,6 +103,25 @@ class ReassignDepartmentForm(forms.Form):
     note = forms.CharField(
         required=False, widget=forms.Textarea(attrs={"class": "form-control", "rows": 2})
     )
+
+
+class AttachmentUploadForm(forms.Form):
+    file = forms.FileField(
+        widget=forms.ClearableFileInput(attrs={"class": "form-control"}),
+    )
+
+    def clean_file(self):
+        f = self.cleaned_data["file"]
+        extension = f.name.rsplit(".", 1)[-1].lower() if "." in f.name else ""
+        if extension not in ALLOWED_ATTACHMENT_EXTENSIONS:
+            raise forms.ValidationError(
+                "Unsupported file type. Allowed: " + ", ".join(sorted(ALLOWED_ATTACHMENT_EXTENSIONS))
+            )
+        if f.size > MAX_ATTACHMENT_SIZE_BYTES:
+            raise forms.ValidationError(
+                f"File is too large (max {MAX_ATTACHMENT_SIZE_BYTES // (1024 * 1024)}MB)."
+            )
+        return f
 
 
 class MarkPendingForm(forms.Form):

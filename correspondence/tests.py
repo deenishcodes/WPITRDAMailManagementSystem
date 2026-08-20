@@ -14,7 +14,14 @@ from django_tenants.test.cases import TenantTestCase
 
 from orgstructure.models import Department, Division, SubDivision, TenantWorkflowConfig
 
-from .models import Correspondence, RoutingEvent, next_registration_number
+from .forms import AttachmentUploadForm
+from .models import (
+    Correspondence,
+    CorrespondenceAttachment,
+    RoutingEvent,
+    attachment_upload_path,
+    next_registration_number,
+)
 from .views import _parse_bulk_csv
 
 User = get_user_model()
@@ -32,6 +39,45 @@ class RegistrationNumberTests(TenantTestCase):
         suffixes = [int(n.split("/")[1]) for n in numbers]
         self.assertEqual(suffixes, sorted(suffixes), "numbers must increment in call order")
         self.assertEqual(suffixes[-1] - suffixes[0], 4)
+
+
+class AttachmentTests(TenantTestCase):
+    def setUp(self):
+        self.dept = Department.objects.create(name="Land Administration")
+        self.postal = User.objects.create_user("postal", password="x")
+        self.letter = Correspondence.objects.create(
+            registration_number="2026/00001",
+            subject="Test letter",
+            sender_name="Someone",
+            date_received="2026-01-01",
+            department=self.dept,
+            registered_by=self.postal,
+        )
+
+    def test_upload_path_is_scoped_by_tenant_schema_and_letter(self):
+        from django.db import connection
+
+        attachment = CorrespondenceAttachment(correspondence=self.letter)
+        path = attachment_upload_path(attachment, "report.pdf")
+        self.assertIn(f"correspondence/{connection.schema_name}/{self.letter.pk}/", path)
+        self.assertTrue(path.endswith("report.pdf"))
+
+    def test_form_rejects_disallowed_extension(self):
+        f = SimpleUploadedFile("virus.exe", b"data", content_type="application/octet-stream")
+        form = AttachmentUploadForm(files={"file": f})
+        self.assertFalse(form.is_valid())
+        self.assertIn("file", form.errors)
+
+    def test_form_accepts_allowed_extension(self):
+        f = SimpleUploadedFile("report.pdf", b"%PDF-1.4 fake", content_type="application/pdf")
+        form = AttachmentUploadForm(files={"file": f})
+        self.assertTrue(form.is_valid())
+
+    def test_form_rejects_oversized_file(self):
+        big_content = b"x" * (16 * 1024 * 1024)  # 16MB, over the 15MB limit
+        f = SimpleUploadedFile("big.pdf", big_content, content_type="application/pdf")
+        form = AttachmentUploadForm(files={"file": f})
+        self.assertFalse(form.is_valid())
 
 
 class BulkRegisterCsvTests(TenantTestCase):

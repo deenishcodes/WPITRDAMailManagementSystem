@@ -227,3 +227,38 @@ class RoutingEvent(models.Model):
 
     def __str__(self):
         return f"{self.correspondence.registration_number}: {self.get_action_display()} by {self.actor}"
+
+
+ALLOWED_ATTACHMENT_EXTENSIONS = {"pdf", "jpg", "jpeg", "png", "doc", "docx", "xls", "xlsx"}
+MAX_ATTACHMENT_SIZE_BYTES = 15 * 1024 * 1024  # 15MB
+
+
+def attachment_upload_path(instance, filename):
+    """
+    Prefixed with the current tenant's schema name so different tenants'
+    uploads land in different directories on disk. This is a logical
+    separation, not the same strength of guarantee as the Postgres
+    schema-per-tenant boundary the rest of this project relies on for
+    isolation — see the MEDIA_ROOT comment in settings.py.
+    """
+    from django.db import connection
+
+    return f"correspondence/{connection.schema_name}/{instance.correspondence_id}/{filename}"
+
+
+class CorrespondenceAttachment(models.Model):
+    correspondence = models.ForeignKey(
+        Correspondence, on_delete=models.CASCADE, related_name="attachments"
+    )
+    file = models.FileField(upload_to=attachment_upload_path)
+    original_filename = models.CharField(max_length=255)
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-uploaded_at"]
+
+    def __str__(self):
+        return f"{self.original_filename} on {self.correspondence.registration_number}"

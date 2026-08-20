@@ -74,6 +74,28 @@
       </div>
     {% endif %}
 
+    <div class="card shadow-sm mb-3">
+      <div class="card-body p-4">
+        <h2 class="h6 mb-3">Attachments</h2>
+        <ul class="list-group list-group-flush mb-3">
+          {% for attachment in attachments %}
+            <li class="list-group-item small d-flex justify-content-between align-items-center">
+              <a href="{% url 'correspondence-download-attachment' correspondence.pk attachment.pk %}">{{ attachment.original_filename }}</a>
+              <span class="text-muted">{{ attachment.uploaded_by|default:"—" }}, {{ attachment.uploaded_at|date:"Y-m-d H:i" }}</span>
+            </li>
+          {% empty %}
+            <li class="list-group-item small text-muted">No attachments.</li>
+          {% endfor %}
+        </ul>
+        <form method="post" action="{% url 'correspondence-upload-attachment' correspondence.pk %}" enctype="multipart/form-data" class="d-flex gap-2">
+          {% csrf_token %}
+          {{ attachment_form.file }}
+          <button type="submit" class="btn btn-outline-secondary btn-sm text-nowrap">Upload</button>
+        </form>
+        <div class="form-text">PDF, Word, Excel, or image files, up to 15MB.</div>
+      </div>
+    </div>
+
     <div class="card shadow-sm">
       <div class="card-body p-4">
         <h2 class="h6 mb-3">History</h2>

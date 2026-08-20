@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Correspondence, RegistrationCounter, RoutingEvent
+from .models import Correspondence, CorrespondenceAttachment, RegistrationCounter, RoutingEvent
 
 
 @admin.register(Correspondence)
@@ -22,6 +22,12 @@ class CorrespondenceAdmin(admin.ModelAdmin):
 class RoutingEventAdmin(admin.ModelAdmin):
     list_display = ("correspondence", "action", "actor", "to_user", "created_at")
     list_filter = ("action",)
+
+
+@admin.register(CorrespondenceAttachment)
+class CorrespondenceAttachmentAdmin(admin.ModelAdmin):
+    list_display = ("correspondence", "original_filename", "uploaded_by", "uploaded_at")
+    readonly_fields = ("uploaded_at",)
 
 
 @admin.register(RegistrationCounter)

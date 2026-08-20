@@ -7,13 +7,14 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.db import models, transaction
-from django.http import HttpResponse
+from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.dateparse import parse_date
 
 from orgstructure.models import Department, TenantWorkflowConfig
 
 from .forms import (
+    AttachmentUploadForm,
     BulkRegisterForm,
     CorrespondenceRegisterForm,
     ForwardToSubDivisionForm,
@@ -21,7 +22,7 @@ from .forms import (
     MarkPendingForm,
     ReassignDepartmentForm,
 )
-from .models import Correspondence, RoutingEvent, next_registration_number
+from .models import Correspondence, CorrespondenceAttachment, RoutingEvent, next_registration_number
 
 User = get_user_model()
 
@@ -321,6 +322,7 @@ def correspondence_detail(request, pk):
     events = correspondence.routing_events.select_related(
         "actor", "to_user", "to_department", "to_division", "to_sub_division"
     )
+    attachments = correspondence.attachments.select_related("uploaded_by")
 
     return render(
         request,
@@ -328,6 +330,8 @@ def correspondence_detail(request, pk):
         {
             "correspondence": correspondence,
             "events": events,
+            "attachments": attachments,
+            "attachment_form": AttachmentUploadForm(),
             "can_forward": _can_forward(request.user, correspondence),
             "can_reassign": _can_reassign(request.user, correspondence),
             "can_act_as_holder": _can_act_as_holder(request.user, correspondence),
@@ -526,3 +530,43 @@ def correspondence_close(request, pk):
         messages.success(request, "Closed.")
 
     return redirect("correspondence-detail", pk=pk)
+
+
+@login_required
+def correspondence_upload_attachment(request, pk):
+    # Uploadable by anyone who can currently view the letter — attachments
+    # are supporting documents relevant to whoever's handling it at any
+    # point, not gated to a specific workflow action the way forward/
+    # reassign/close are.
+    correspondence = get_object_or_404(Correspondence.objects.visible_to(request.user), pk=pk)
+
+    if request.method == "POST":
+        form = AttachmentUploadForm(request.POST, request.FILES)
+        if form.is_valid():
+            uploaded_file = form.cleaned_data["file"]
+            CorrespondenceAttachment.objects.create(
+                correspondence=correspondence,
+                file=uploaded_file,
+                original_filename=uploaded_file.name,
+                uploaded_by=request.user,
+            )
+            messages.success(request, "Attachment uploaded.")
+        else:
+            for error in form.errors.get("file", []):
+                messages.error(request, error)
+
+    return redirect("correspondence-detail", pk=pk)
+
+
+@login_required
+def correspondence_download_attachment(request, pk, attachment_id):
+    # Re-checks visibility here rather than trusting a direct link from the
+    # detail page — same direct-URL-guess protection as every other
+    # detail/action view (see CorrespondenceQuerySet.visible_to).
+    correspondence = get_object_or_404(Correspondence.objects.visible_to(request.user), pk=pk)
+    attachment = get_object_or_404(
+        CorrespondenceAttachment, pk=attachment_id, correspondence=correspondence
+    )
+    return FileResponse(
+        attachment.file.open("rb"), as_attachment=True, filename=attachment.original_filename
+    )
