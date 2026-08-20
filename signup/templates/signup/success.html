@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Workspace created — Mail Management System</title>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+  <div class="container" style="max-width: 560px; margin-top: 4rem;">
+    <div class="card shadow-sm">
+      <div class="card-body p-4">
+        <h1 class="h4 mb-3">You're set up!</h1>
+        <p>
+          <strong>{{ client.name }}</strong>'s workspace has been created at:
+        </p>
+        <p class="mb-4">
+          <code>http://{{ domain.domain }}:8000/</code>
+        </p>
+        <p class="text-muted small">
+          Staff accounts, login, and the correspondence workflow itself
+          arrive in Phase 2b — this confirms the tenant schema was
+          provisioned successfully.
+        </p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

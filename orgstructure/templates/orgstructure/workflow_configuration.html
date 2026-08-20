@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Workflow configuration — Mail Management System</title>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+  <div class="container" style="max-width: 560px; margin-top: 4rem;">
+    <div class="card shadow-sm">
+      <div class="card-body p-4">
+        <h1 class="h4 mb-3">Workflow configuration</h1>
+
+        {% if messages %}
+          {% for message in messages %}
+            <div class="alert alert-success">{{ message }}</div>
+          {% endfor %}
+        {% endif %}
+
+        <p class="text-muted small">
+          Controls whether letters in your organisation pass through the
+          Sub-Branch tier (Head of Branch &rarr; Sub-Branch &rarr; Subject
+          Officer) or go straight from Head of Branch to Subject Officer.
+          Safe to change at any time &mdash; letters already assigned into
+          a step keep following the rules active when they got there.
+        </p>
+
+        <form method="post">
+          {% csrf_token %}
+          <div class="form-check form-switch mb-4">
+            {{ form.sub_branch_tier_enabled }}
+            <label class="form-check-label" for="{{ form.sub_branch_tier_enabled.id_for_label }}">
+              Use the Sub-Branch tier
+            </label>
+          </div>
+          <button type="submit" class="btn btn-primary">Save</button>
+          <a href="/" class="btn btn-outline-secondary">Back to dashboard</a>
+        </form>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
