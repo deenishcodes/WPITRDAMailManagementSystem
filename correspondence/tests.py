@@ -8,6 +8,7 @@ Phase 2c plan.
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
+from django.db import models
 from django_tenants.test.cases import TenantTestCase
 
 from orgstructure.models import Department, Division, SubDivision, TenantWorkflowConfig
@@ -25,6 +26,54 @@ class RegistrationNumberTests(TenantTestCase):
         suffixes = [int(n.split("/")[1]) for n in numbers]
         self.assertEqual(suffixes, sorted(suffixes), "numbers must increment in call order")
         self.assertEqual(suffixes[-1] - suffixes[0], 4)
+
+
+class SearchTests(TenantTestCase):
+    """
+    correspondence_list's `q` param filters on registration_number, subject,
+    and sender_name (icontains). This tests the filtering logic directly at
+    the queryset level, matching how the view builds it.
+    """
+
+    def setUp(self):
+        self.dept = Department.objects.create(name="Land Administration")
+        self.postal = User.objects.create_user("postal", password="x")
+
+        self.letter_a = Correspondence.objects.create(
+            registration_number="2026/00001",
+            subject="Land title dispute",
+            sender_name="A. Perera",
+            date_received="2026-01-01",
+            department=self.dept,
+            registered_by=self.postal,
+        )
+        self.letter_b = Correspondence.objects.create(
+            registration_number="2026/00002",
+            subject="Boundary survey request",
+            sender_name="N. Silva",
+            date_received="2026-01-02",
+            department=self.dept,
+            registered_by=self.postal,
+        )
+
+    def _search(self, query):
+        return Correspondence.objects.filter(
+            models.Q(registration_number__icontains=query)
+            | models.Q(subject__icontains=query)
+            | models.Q(sender_name__icontains=query)
+        )
+
+    def test_search_by_registration_number(self):
+        self.assertEqual(set(self._search("00001")), {self.letter_a})
+
+    def test_search_by_subject(self):
+        self.assertEqual(set(self._search("boundary")), {self.letter_b})
+
+    def test_search_by_sender_name_case_insensitive(self):
+        self.assertEqual(set(self._search("perera")), {self.letter_a})
+
+    def test_search_no_match(self):
+        self.assertEqual(set(self._search("nonexistent")), set())
 
 
 class VisibilityTests(TenantTestCase):

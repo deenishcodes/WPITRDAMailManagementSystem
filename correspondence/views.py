@@ -3,7 +3,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
-from django.db import transaction
+from django.db import models, transaction
 from django.shortcuts import get_object_or_404, redirect, render
 
 from orgstructure.models import TenantWorkflowConfig
@@ -99,6 +99,14 @@ def correspondence_list(request):
     if status in Correspondence.Status.values:
         qs = qs.filter(status=status)
 
+    query = request.GET.get("q", "").strip()
+    if query:
+        qs = qs.filter(
+            models.Q(registration_number__icontains=query)
+            | models.Q(subject__icontains=query)
+            | models.Q(sender_name__icontains=query)
+        )
+
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
 
@@ -109,6 +117,7 @@ def correspondence_list(request):
             "page_obj": page_obj,
             "status_choices": Correspondence.Status.choices,
             "current_status": status,
+            "query": query,
         },
     )
 
