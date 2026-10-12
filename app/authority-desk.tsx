@@ -1,0 +1,119 @@
+'use client';
+import { RoleSignOut } from '@/components/role-signout';
+import { useState, useEffect, useCallback } from 'react';
+import { SidebarProvider, Sidebar, SidebarContent, SidebarHeader, SidebarMenu, SidebarMenuItem, SidebarMenuButton, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Toaster, toast } from 'sonner';
+import { Mail, Inbox, ShieldCheck, Truck, ArrowUpRight, Plus, Search, Building2, LockKeyhole, RefreshCw, FileText, ArrowRight, CheckCircle2, Clock, AlertTriangle, Bell, ChevronRight } from 'lucide-react';
+import { LetterDates, ReplyStatus } from '@/components/letter-progress';
+import { deliveryLabel, officeName, offices, type Person, type Letter, contents, DJANGO_GROUP_PERMISSIONS } from '@/lib/model';
+const labels: Record<string, string[]> = { English: ['Correspondence', 'Physical delivery', 'Between offices', 'Activity trail', 'People & roles', '', 'Register letter', 'Awaiting decision', 'Delivery pending', 'Physically received', 'Delivery issues'], Sinhala: ['ලිපි ලේඛන', 'භෞතික බෙදාහැරීම', 'කාර්යාල අතර', 'ක්‍රියාකාරකම් ඉතිහාසය', 'පුද්ගලයන් සහ භූමිකා', '', 'ලිපිය ලියාපදිංචි කරන්න', 'තීරණයක් අපේක්ෂාවෙන්', 'බෙදාහැරෙමින් පවතී', 'භාර දෙන ලදී', 'ගැටලු'], Tamil: ['கடிதங்கள்', 'நேரடி விநியோகம்', 'அலுவலகங்களுக்கு இடையில்', 'செயற்பாட்டு வரலாறு', 'பயனர்கள் மற்றும் பொறுப்புகள்', '', 'கடிதத்தைப் பதிவு செய்க', 'முடிவுக்காகக் காத்திருக்கிறது', 'விநியோகத்தில்', 'வழங்கப்பட்டது', 'சிக்கல்கள்'] };
+function Pick({ value, onChange, items, label }: any) { return <Select value={value} onValueChange={onChange}><SelectTrigger aria-label={label} className="w-full"><SelectValue placeholder={label}/></SelectTrigger><SelectContent>{items.map((x: any) => <SelectItem key={typeof x === 'string' ? x : x.id} value={typeof x === 'string' ? x : x.id}>{typeof x === 'string' ? x : x.name}</SelectItem>)}</SelectContent></Select>; }
+function Field({ label, children }: any) { return <label className="field"><span>{label}</span>{children}</label>; }
+const when = (v: string) => new Date(v).toLocaleString('en-GB', { timeZone: 'Asia/Colombo', dateStyle: 'medium', timeStyle: 'short' });
+const localNow = () => { const n = new Date(); return new Date(n.getTime() - n.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
+export default function AuthorityDesk() {
+    const [view, setView] = useState(0), [lang, setLang] = useState('English'), [people, setPeople] = useState<Person[]>([]), [letters, setLetters] = useState<Letter[]>([]), [actor, setActor] = useState<Person | null>(null), [loading, setLoading] = useState(true), [error, setError] = useState(''), [query, setQuery] = useState(''), [filter, setFilter] = useState('All stages'), [selected, setSelected] = useState<string | null>(null), [register, setRegister] = useState(false), [busy, setBusy] = useState(false), [op, setOp] = useState<any>(null), [opText, setOpText] = useState(''), [opPerson, setOpPerson] = useState(''), [opOffice, setOpOffice] = useState('KOT'), [opStatus, setOpStatus] = useState('In progress'), [newPerson, setNewPerson] = useState(false), [personName, setPersonName] = useState(''), [personEmail, setPersonEmail] = useState(''), [personRole, setPersonRole] = useState('Officer'), [personOffice, setPersonOffice] = useState('COL');
+    const [form, setForm] = useState<any>({ subject: '', sender: '', received: localNow(), method: 'Post', condition: 'Good', language: 'English', secret: false, hod: '', department: '' }), [upload, setUpload] = useState<File | null>(null), [preview, setPreview] = useState('');
+    const t = labels[lang];
+    const l = letters.find(x => x.id === selected);
+    const who = (id: string) => people.find(p => p.id === id)?.name || 'Unassigned';
+    const actorId = '';
+    const load = useCallback(async () => { try {
+        setError('');
+        const r = await fetch('/api/desk', { cache: 'no-store' });
+        if (r.status === 401 || r.status === 403) {
+            window.location.replace('/login');
+            return;
+        }
+        const d: any = await r.json();
+        if (!r.ok)
+            throw new Error(d.error);
+        if (d.actor.role !== 'Government') {
+            window.location.replace('/');
+            return;
+        }
+        setLetters(d.letters);
+        setPeople(d.people);
+        setActor(d.actor);
+    }
+    catch (e: any) {
+        setError(e.message);
+    }
+    finally {
+        setLoading(false);
+    } }, []);
+    useEffect(() => { setSelected(null); setLoading(true); load(); }, [load]);
+    useEffect(() => { if (!upload) {
+        setPreview('');
+        return;
+    } const url = URL.createObjectURL(upload); setPreview(url); return () => URL.revokeObjectURL(url); }, [upload]);
+    async function mutate(data: any) { setBusy(true); try {
+        const r = await fetch('/api/desk', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+        const d: any = await r.json();
+        if (!r.ok)
+            throw new Error(d.error);
+        await load();
+        return d;
+    }
+    catch (e: any) {
+        toast.error(e.message);
+        throw e;
+    }
+    finally {
+        setBusy(false);
+    } }
+    async function openLetter(id: string) { try {
+        await mutate({ type: 'view', id });
+        setSelected(id);
+    }
+    catch { } }
+    function action(type: string) { setOp({ type, id: l?.id }); setOpText(''); setOpPerson(''); setOpStatus('In progress'); setOpOffice(offices.find(x => x !== l?.office) || 'KOT'); }
+    async function doAction(e: any) { e.preventDefault(); try {
+        await mutate({ ...op, note: opText, person: opPerson, office: opOffice, status: opStatus });
+        setOp(null);
+        toast.success('Saved to the activity trail');
+    }
+    catch { } }
+    async function attach(file: File, id: string) { const data = new FormData(); data.set('file', file); data.set('id', id); const r = await fetch('/api/scan', { method: 'POST', body: data }); const d: any = await r.json(); if (!r.ok)
+        throw new Error(d.error); await load(); }
+    const departments = Array.from(new Set(people.filter(p => p.role === 'HOD' && p.office === actor?.office && p.active && p.subject).map(p => p.subject as string)));
+    useEffect(() => { const mc = (document as any).modelContext; if (!mc?.registerTool)
+        return; const ac = new AbortController(); Promise.resolve(mc.registerTool({ name: 'find_correspondence', description: 'Search correspondence visible to your signed-in role.', inputSchema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'], additionalProperties: false }, annotations: { readOnlyHint: true, untrustedContentHint: true }, execute: async (input: any) => { if (typeof input.query !== 'string')
+            throw new Error('query must be text'); setQuery(input.query); setView(0); return letters.filter(l => (l.ref + ' ' + l.subject).toLowerCase().includes(input.query.toLowerCase())).map(l => ({ reference: l.ref, subject: l.subject, delivery: l.delivery })); } }, { signal: ac.signal })).catch(() => { }); return () => ac.abort(); }, [letters]);
+    const visibleLetters = letters.filter(x => (x.subject + ' ' + x.ref + ' ' + x.sender).toLowerCase().includes(query.toLowerCase()) && (filter === 'All stages' || x.delivery === filter) && (view !== 1 || x.delivery !== 'Delivered') && (view !== 2 || x.destination || x.origin || x.replyTo));
+    const stats = [letters.filter(x => ['Registered', 'With HOD', 'Returned to HOD'].includes(x.delivery)).length, letters.filter(x => ['Assigned', 'Awaiting dispatch', 'In transit'].includes(x.delivery)).length, letters.filter(x => x.delivery === 'Delivered').length, letters.filter(x => x.delivery === 'Missing' || x.history.at(-1)?.text.startsWith('Physical delivery exception')).length];
+    const awaiting = letters.filter(x => x.delivery === 'Missing');
+    const roleDescription = 'Across every office';
+    const menuItems = [[Inbox, 0], [Truck, 1], [ArrowUpRight, 2], [ShieldCheck, 3], [Building2, 4]] as const;
+    const permittedViews = [0, 1, 2, 3, 4];
+    return <SidebarProvider><Toaster richColors position="top-right"/><Sidebar><SidebarHeader><div className="brand"><Mail /><span>Mail<small>MANAGEMENT SYSTEM</small></span></div></SidebarHeader><SidebarContent><div className="navlabel">YOUR ROLE</div><SidebarMenu>{menuItems.filter(([, index]) => permittedViews.includes(index)).map(([Icon, index]) => <SidebarMenuItem key={index}><SidebarMenuButton isActive={view === index} onClick={() => { setView(index); setQuery(''); setFilter('All stages'); }}><Icon /><span>{t[index]}</span></SidebarMenuButton></SidebarMenuItem>)}</SidebarMenu><div className="sidebar-note"><LockKeyhole size={18}/><b>SUPER AUTHORITY</b><p>{actor ? officeName[actor.office] : 'Loading office…'}</p><RoleSignOut /></div></SidebarContent></Sidebar><SidebarInset><header className="topbar"><SidebarTrigger /><span className="breadcrumb">{actor ? officeName[actor.office] : 'Workspace'} <span>/</span> {'SUPER AUTHORITY'}</span><div className="language"><Pick label="Interface language" value={lang} onChange={setLang} items={['English', 'Sinhala', 'Tamil']}/></div></header><main className="workspace"><div className="role-strip"><div><span className="eyebrow">SIGNED IN AS</span><strong>{actor?.name || 'Loading…'}</strong><small>{"SUPER AUTHORITY"} · {actor ? officeName[actor.office] : ''}</small></div><p><b>{roleDescription}</b></p><Button variant="outline" size="sm" onClick={load} disabled={busy} aria-label="Refresh register"><RefreshCw size={16}/></Button></div><div className="heading"><div><div className="eyebrow">CORRESPONDENCE DESK</div><h1>{t[view]}</h1><p>{view === 0 ? 'Review your letters and next actions.' : view === 1 ? 'Physical originals remain visible until they reach the intended person.' : view === 2 ? 'Track letters from dispatch to the receiving office.' : view === 3 ? 'A record of decisions, views and physical handovers.' : view === 4 ? 'Assign one role per person using their work email.' : 'Four roles. One connected correspondence journey.'}</p></div></div>
+ {error ? <div className="error-box"><AlertTriangle /><div><b>Workspace unavailable</b><p>{error}</p>{error.startsWith('Sign in') ? <a className="signin" href="/login" target="_top">Sign in to your workspace →</a> : <Button onClick={load}>Try again</Button>}</div></div> : loading ? <div className="panel loading">Loading correspondence…</div> : <>
+ {view < 3 && <><div className="stats">{stats.map((n, i) => <button key={i} onClick={() => { setView(0); setFilter(i === 0 ? 'Registered' : i === 1 ? 'Assigned' : i === 2 ? 'Delivered' : 'Missing'); }}><span>{t[7 + i]}{[Clock, Truck, CheckCircle2, AlertTriangle].map((I, j) => i === j ? <I key={j} size={18}/> : null)}</span><strong>{String(n).padStart(2, '0')}</strong><small>{i === 2 ? 'Physical receipt recorded' : i === 3 ? 'Needs a delivery check' : i === 1 ? 'Assigned or transferring' : 'Registered, with HOD or returned'}</small></button>)}</div>{awaiting.length > 0 && <div className="notice"><Bell size={18}/><span><b>{awaiting.length} {awaiting.length === 1 ? 'item needs' : 'items need'} attention</b> in this role’s queue</span><button onClick={() => openLetter(awaiting[0].id)}>Open next <ArrowRight size={15}/></button></div>}<section className="panel"><div className="panel-head"><h2>{view === 2 ? 'Office-to-office register' : view === 1 ? 'Delivery queue' : 'Incoming register'} <span className="count">{visibleLetters.length}</span></h2><div className="tools"><div className="search"><Search size={16}/><Input aria-label="Search correspondence" placeholder="Search subject or reference…" value={query} onChange={e => setQuery(e.target.value)}/></div><Pick label="Stage filter" value={filter} onChange={setFilter} items={['All stages', 'Registered', 'With HOD', 'Assigned', 'Delivered', 'Missing', 'Returned to HOD', 'Awaiting dispatch', 'In transit']}/></div></div><Table><TableHeader><TableRow><TableHead className="letter-col">Letter / reference</TableHead><TableHead>Responsible</TableHead><TableHead>Delivery</TableHead><TableHead>Action</TableHead><TableHead>Office</TableHead><TableHead /></TableRow></TableHeader><TableBody>{visibleLetters.map(x => <TableRow key={x.id} className="mail-row"><TableCell><button className="letter-button" onClick={() => openLetter(x.id)}><span className={'letter-icon ' + (x.secret ? 'secret' : '')}>{x.secret ? <LockKeyhole size={19}/> : <FileText size={19}/>}</span><span><b>{x.subject}</b><small>{x.ref} {x.secret ? ' · SECRET ENVELOPE' : ''}</small></span></button></TableCell><TableCell><span className="owner-name">{who(x.officer || x.hod)}</span><small>{x.officer ? 'Assigned officer' : 'Decision maker'}</small></TableCell><TableCell><span className={'badge ' + (x.delivery === 'Delivered' ? 'done' : x.delivery === 'Missing' ? 'warning' : '')}>{deliveryLabel(x.delivery)}</span></TableCell><TableCell><span className="action-state">{x.action}</span></TableCell><TableCell>{x.office}{x.destination && ' → ' + x.destination}</TableCell><TableCell><button aria-label={'Open ' + x.ref} onClick={() => openLetter(x.id)}><ChevronRight size={18}/></button></TableCell></TableRow>)}</TableBody></Table>{!visibleLetters.length && <div className="empty"><Inbox /><h2>No correspondence here</h2><p>Try another filter.</p></div>}<div className="table-footer">{visibleLetters.length} records · Times shown in Sri Lanka Standard Time <span>Delivery and action progress are tracked separately</span></div></section></>}
+ {view === 3 && <section className="panel"><div className="panel-head"><h2>Activity across visible correspondence</h2></div><div className="audit-list">{letters.flatMap(l => l.history.map(e => ({ ...e, ref: l.ref, id: l.id }))).sort((a, b) => b.at.localeCompare(a.at)).map((e, i) => <div className="audit-event" key={i}><span className="timeline-dot"/><div><b>{e.text}</b><p>{e.actor} · {e.role} · <button onClick={() => openLetter(e.id)}>{e.ref}</button></p></div><time>{when(e.at)}</time></div>)}</div></section>}
+ {view === 4 && <section className="panel"><div className="panel-head"><div><h2>People & responsibilities</h2><p className="subtle">Manage each person’s role and office. Credentials are provisioned separately.</p></div>{<Button onClick={() => setNewPerson(true)}><Plus />Assign role</Button>}</div><div className="role-permissions">{(['Peon', 'HOD', 'Officer'] as const).map(role => <div key={role}><b>{role}</b><span>{({Peon:'Registration and physical delivery',HOD:'Review, assign and delegate',Officer:'Assigned letters and actions'})[role]}</span></div>)}</div><Table><TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Work email</TableHead><TableHead>Role</TableHead><TableHead>Office</TableHead><TableHead>Open delivery workload</TableHead><TableHead>Status</TableHead><TableHead /></TableRow></TableHeader><TableBody>{people.map(p => <TableRow key={p.id}><TableCell>{p.name}</TableCell><TableCell>{p.accountEmail || 'Not linked yet'}</TableCell><TableCell>{p.role}</TableCell><TableCell>{officeName[p.office]}</TableCell><TableCell>{letters.filter(l => (l.hod === p.id || l.officer === p.id) && l.delivery !== 'Delivered').length}</TableCell><TableCell>{p.active ? 'Active' : 'Inactive'}</TableCell><TableCell>{p.role !== 'Government' && p.active && <Button size="sm" variant="outline" onClick={async () => { try {
+            await mutate({ type: 'deactivate', person: p.id });
+            toast.success('Account deactivated');
+        }
+        catch { } }}>Deactivate</Button>}</TableCell></TableRow>)}</TableBody></Table><div className="table-footer">An email may be assigned once. Historical actions remain attributed to their original author.</div></section>}
+ </>}
+ </main></SidebarInset>
+ <Sheet open={!!selected && !!l} onOpenChange={v => !v && setSelected(null)}><SheetContent className="detail-sheet sm:max-w-[690px] overflow-y-auto"><SheetHeader><div className="eyebrow">{l?.ref}</div><SheetTitle className="text-2xl">{l?.subject}</SheetTitle><SheetDescription>{l?.secret ? 'Restricted envelope correspondence' : 'Correspondence record'} · {l?.office && officeName[l.office]}</SheetDescription></SheetHeader>{l && actor && <div className="detail-body"><div className="detail-badges"><span className={'badge ' + (l.delivery === 'Delivered' ? 'done' : '')}>{deliveryLabel(l.delivery)}</span><span className="badge neutral">Action: {l.action}</span></div><Tabs defaultValue="details"><TabsList><TabsTrigger value="details">Details & actions</TabsTrigger><TabsTrigger value="history">History ({l.history.length})</TabsTrigger></TabsList><TabsContent value="details"><dl className="metadata">{[['From', l.sender], ['Initial receipt', when(l.received)], ['Digital registration', when(l.entered)], ['Arrival', l.method], ['Condition', l.condition], ['Language', l.language], ['Responsible HOD', who(l.hod)], ['Assigned officer', who(l.officer)], ['Views', String(l.views)], ...(l.department ? [['Department', l.department]] : []), ...(l.destination ? [['Destination', officeName[l.destination]]] : []), ...(l.previousRefs?.length ? [['Earlier references', l.previousRefs.join(', ')]] : [])].map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl><LetterDates letter={l}/><ReplyStatus letter={l}/>{l.instructions && <section className="instruction"><b>HOD instructions</b><p>{l.instructions}</p></section>}{l.outcome && <section className="instruction"><b>Latest action</b><p>{l.outcome}</p></section>}{contents(actor, l) ? <section className="scan-box"><FileText /><div><b>{l.secret ? 'Restricted contents' : 'Scanned correspondence'}</b>{l.file ? <a href={'/api/scan?actor=' + actorId + '&id=' + l.id} target="_blank" rel="noreferrer">Open {l.fileName} ↗</a> : <p>{l.sample && !l.secret ? 'Sample record — no original scan attached.' : 'No scan attached.'}</p>}{l.restrictedText && <p className="preserve">{l.restrictedText}</p>}</div></section> : <section className="instruction"><LockKeyhole /><p>Envelope metadata only. Contents are restricted to the addressed HOD and SUPER AUTHORITY.</p></section>}
+ </TabsContent><TabsContent value="history"><div className="detail-timeline">{[...l.history].reverse().map((e, i) => <div key={i}><time>{when(e.at)}</time><b>{e.text}</b><p>{e.actor} · {e.role}</p></div>)}</div></TabsContent></Tabs></div>}</SheetContent></Sheet>
+ <Dialog open={newPerson} onOpenChange={setNewPerson}><DialogContent><DialogHeader><DialogTitle>Assign a role</DialogTitle><DialogDescription>A person may hold one role. Their work email is matched to their signed-in account.</DialogDescription></DialogHeader><form className="form" onSubmit={async (e) => { e.preventDefault(); try {
+        await mutate({ type: 'person', name: personName, email: personEmail, role: personRole, office: personOffice });
+        setNewPerson(false);
+        setPersonName('');
+        setPersonEmail('');
+    }
+    catch { } }}><Field label="Name"><Input required value={personName} onChange={e => setPersonName(e.target.value)}/></Field><Field label="Work email"><Input type="email" required value={personEmail} onChange={e => setPersonEmail(e.target.value)}/></Field><Field label="Role"><Pick label="Role" value={personRole} onChange={setPersonRole} items={['HOD', 'Peon', 'Officer']}/></Field><Field label="Office"><Pick label="Office" value={personOffice} onChange={setPersonOffice} items={offices.map(id => ({ id, name: officeName[id] }))}/></Field><Button disabled={busy}>Assign role</Button></form></DialogContent></Dialog>
+ </SidebarProvider>;
+}

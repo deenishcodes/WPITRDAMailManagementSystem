@@ -1,0 +1,40 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {seed,change,publicLetter,visible} from '../lib/model.ts';
+const user={userId:'qa',email:'qa@example.test',displayName:'QA'};
+const form={type:'register',subject:'Workflow test',sender:'Test sender',received:new Date().toISOString(),method:'Post',condition:'Good',language:'English',department:'General'};
+test('peon follows HOD assignment and cannot take decision-maker actions',()=>{
+ const s=seed(user),p=s.people.find(p=>p.id==='COL-p'),hod=s.people.find(p=>p.id==='COL-h1');
+ const {id}=change(s,p,form);const l=s.letters.find(l=>l.id===id);
+ assert.throws(()=>change(s,p,{type:'assign',id,person:'COL-o1',note:'Unauthorized'}));
+ assert.throws(()=>change(s,p,{type:'deliver',id,recipient:'Officer'}));
+ change(s,p,{type:'handover-hod',id,recipient:'HOD',requireReceipt:true});
+ change(s,hod,{type:'assign',id,person:'COL-o1',note:'Process the request'});
+ change(s,p,{type:'missing',id,note:'Officer unavailable'});
+ change(s,p,{type:'view',id});assert.equal(l.issue,'Officer unavailable');
+ assert.throws(()=>change(s,p,{type:'handover-hod',id,recipient:'HOD'}));
+ change(s,p,{type:'deliver',id,recipient:'Named officer',requireReceipt:true});
+ assert.equal(l.delivery,'Delivered');assert.equal(l.issue,undefined);
+ assert.throws(()=>change(s,p,{type:'deliver',id,recipient:'Duplicate'}));
+});
+test('office transfer preserves earlier reference and assigns destination HOD',()=>{
+ const s=seed(user),p=s.people.find(p=>p.id==='COL-p'),hod=s.people.find(p=>p.id==='COL-h1'),destination=s.people.find(p=>p.id==='KOT-p');
+ const {id}=change(s,p,form);const l=s.letters.find(l=>l.id===id),oldRef=l.ref;
+ assert.throws(()=>change(s,p,{type:'forward',id,office:'KOT'}));
+ change(s,hod,{type:'forward',id,office:'KOT',note:'Destination HOD'});
+ assert(visible(destination,l));
+ assert.throws(()=>change(s,destination,{type:'receive',id,recipient:'Destination'}));
+ change(s,p,{type:'dispatch',id,note:'Courier reference QA123',requireReceipt:true});
+ assert.throws(()=>change(s,p,{type:'receive',id,recipient:'Wrong office'}));
+ change(s,destination,{type:'receive',id,recipient:'Destination receiving officer',requireReceipt:true});
+ assert.equal(l.office,'KOT');assert.equal(l.origin,'COL');assert(l.previousRefs.includes(oldRef));assert.match(l.ref,/^KOT-/);assert.equal(l.delivery,'Registered');assert(l.hod.startsWith('KOT-'));
+});
+test('secret envelope contents stay inaccessible to peon',()=>{
+ const s=seed(user),p=s.people.find(p=>p.id==='COL-p'),hod=s.people.find(p=>p.id==='COL-h1');
+ const {id}=change(s,p,{...form,secret:true,hod:hod.id});const l=s.letters.find(l=>l.id===id);
+ change(s,hod,{type:'secret',id,note:'Restricted material'});
+ assert.throws(()=>change(s,p,{type:'file',id,key:'forbidden'}));
+ assert.throws(()=>change(s,p,{type:'secret',id,note:'Unauthorized'}));
+ const redacted=publicLetter(p,l);assert.equal(redacted.restrictedText,undefined);assert(!JSON.stringify(redacted).includes('Restricted material'));
+ change(s,p,{type:'handover-hod',id,recipient:'Addressed HOD',requireReceipt:true});assert.equal(l.delivery,'Delivered');
+});
